@@ -219,7 +219,7 @@ Browser screenshots、HTML snapshots 和日志 artifacts SHALL 保存到 workspa
 
 护栏的判定结果 SHALL 是三态：`allow` / `deny` / `ask`。`ask` SHALL 被路由到审批层（`agent/approval.py` 的 `ApprovalHandler`），SHALL NOT 被护栏自行解释为放行。`ask` 在各运行时的实际行为 SHALL 被如实描述：交互 CLI 弹窗询问；非交互 / TTY 不可用时 SHALL 由 `CliApprovalHandler` 判 `UNAVAILABLE`（即拒绝）；Web 弹卡片；benchmark 运行器不注入 handler，恒 `FailClosedApprovalHandler`（即拒绝）。`allow` SHALL NOT 表示「安全」，SHALL 只表示「护栏没有理由阻止」；护栏 SHALL NOT 因为判定 `allow` 而绕过执行后端。
 
-受保护路径与工作区边界的判定 SHALL 按**路径段**比较（`path == prefix` 或 `path` 以 `prefix + "/"` 开头），SHALL NOT 使用裸字符串前缀比较——裸前缀会把 `/various.txt` 当作 `/var` 下的路径、把 `/tmp/ws-evil` 当作工作区 `/tmp/ws` 内的路径。判定前 SHALL 先对路径做规范化（解析 `..` 与 `.` 段），使 `rm -rf /tmp/ws/../etc`（工作区为 `/tmp/ws`）SHALL NOT 因字面前缀匹配而被判为工作区内。该判定 SHALL 独立于解析器实现：解析器只确定「参数是哪个」，路径规范化与分量边界比较 SHALL 在执行路径上完成。
+受保护路径与工作区边界的判定 SHALL 按**路径段**比较（`path == prefix` 或 `path` 以 `prefix + "/"` 开头），SHALL NOT 使用裸字符串前缀比较——裸前缀会把 `/various.txt` 当作 `/var` 下的路径、把 `/tmp/ws-evil` 当作工作区 `/tmp/ws` 内的路径。判定前 SHALL 先对路径做规范化（解析 `..` 与 `.` 段），使 `rm -rf /tmp/ws/../etc`（工作区为 `/tmp/ws`）SHALL NOT 因字面前缀匹配而被判为工作区内。**工作区边界判定** SHALL 对 POSIX 绝对路径（`/` 开头）进一步解析符号链接（realpath 语义，且 `..` SHALL 在符号链接解析之后折叠），使工作区经符号链接表示时，工作区与命令目标使用同一规范表示——`rm -rf <link>/build`（工作区为 `<link> → <real>`）SHALL 被判为工作区内；**相对路径** SHALL 保持词法规范化（护栏不掌握命令 cwd）。**受保护路径判定** SHALL 保持既有词法规范化，不受上述 realpath 语义影响。工作区边界判定中绝对路径无法规范化（如符号链接循环）时 SHALL fail-closed（判为不在工作区内），SHALL NOT 退回字面比较而放行；「目标尚不存在」SHALL NOT 被当作解析失败——解析 SHALL 在目标不存在时按非严格 realpath 解析（不存在的尾部按词法追加），仅在解析器报告循环等错误时 fail-closed。该判定 SHALL 独立于解析器实现：解析器只确定「参数是哪个」，路径规范化与分量边界比较 SHALL 在执行路径上完成；上述 realpath 语义 SHALL 同时用于工作区包含判定与写白名单的 workspace 相对路径计算。Windows 盘符绝对路径沿用既有判定口径，不进入该 POSIX 包含判定。
 
 **重定向目标**与 **mv/cp 目标**的判定 SHALL 豁免设备文件 `/dev/null`、`/dev/stdout`、`/dev/stderr`——它们是黑洞设备与进程标准流的别名，不属于「受保护的系统目录内容」语义。该豁免 SHALL NOT 扩展到 rm/chmod/curl-wget 的目标判定（`rm -rf /dev/null` SHALL 保持拒绝）；其余 `/dev/*` 目标 SHALL 保持拒绝。**重定向目标 SHALL 与 mv/cp 目标使用同一套敏感点目录判定**——`echo X > .env`、`echo X >> .env`、`cat payload > ~/.ssh/authorized_keys` SHALL 被拒绝（它们当前只比受保护系统目录、不覆盖敏感点目录）。
 
@@ -275,6 +275,31 @@ heredoc 的正文 SHALL 按**绑定关系**分流，SHALL NOT 一刀切：当 he
 - **GIVEN** 工作区为 `/tmp/ws`，命令为 `rm -rf /tmp/ws`（或 `rm -rf /tmp/ws/`）
 - **WHEN** 命令护栏校验
 - **THEN** SHALL 拒绝（删除工作区根本身等同越界破坏）
+
+#### Scenario: 符号链接工作区内 rm 放行
+
+- **GIVEN** 工作区为 `<link> → <real>`（符号链接），命令为 `rm -rf <link>/build` 或 `rm -rf <real>/build`
+- **WHEN** 命令护栏校验
+- **THEN** SHALL 放行（工作区与目标按 realpath 归一后使用同一规范表示；两种字面表示均在工作区内）
+
+#### Scenario: 工作区内符号链接不得成为越界通道
+
+- **GIVEN** 工作区内存在符号链接 `escape → <outside>`，命令为 `rm -rf <workspace>/escape` 或 `rm -rf <workspace>/escape/`
+- **WHEN** 命令护栏校验
+- **THEN** SHALL 拒绝（目标的 realpath 落在工作区之外；这是保守过度判定——无尾斜杠时 `rm` 实际只删除链接本身，误报代价在 change design 的 Risks 登记）
+- **AND** 前缀碰撞（`<workspace>-evil`）、`..` 穿越与删除工作区根本身 SHALL 继续保持拒绝
+
+#### Scenario: 符号链接后的 `..` 按真实解析路径判定
+
+- **GIVEN** 工作区内存在 `escape → <outside>`，命令为 `rm -rf <workspace>/escape/../victim`
+- **WHEN** 命令护栏校验
+- **THEN** SHALL 拒绝（POSIX realpath 先跟随 `escape`、再折叠 `..`，目标为工作区外的 `<outside 的父>/victim`；SHALL NOT 先按词法把 `escape/..` 折叠回工作区内）
+
+#### Scenario: 无法解析的绝对路径 fail-closed
+
+- **GIVEN** 工作区为绝对路径 `<workspace>`，工作区内存在符号链接循环 `<workspace>/loop → <workspace>/loop`，命令目标为绝对路径 `<workspace>/loop/x`
+- **WHEN** 命令护栏校验
+- **THEN** SHALL 拒绝（绝对路径解析报告循环等错误时判为不在工作区内；SHALL NOT 退回字面比较而放行，也 SHALL NOT 因目标不存在而误判为解析失败）
 
 #### Scenario: 重定向到受保护路径拒绝
 

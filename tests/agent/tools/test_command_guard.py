@@ -6,6 +6,8 @@ Covers design.md 第一/二轮：命令护栏是"护栏不是边界"——轻量
 """
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from agent.tools.command_guard import (
@@ -300,6 +302,155 @@ class TestPathSegmentBoundary:
         """删工作区根本身的破坏性与越界相当。"""
         g = CommandGuard(workspace="/tmp/ws")
         assert g.check(command) is CommandVerdict.DENY
+
+
+class TestSymlinkedWorkspaceContainment:
+    """工作区包含判定按 realpath 比较（issue #310）。
+
+    显式构造「workspace 与命令字面表示不一致」的场景，不依赖宿主 `/tmp` 是否为符号链接。
+    工作区包含判定是 POSIX 路径口径；非 POSIX 或无符号链接权限时 skip。
+    """
+
+    @pytest.fixture()
+    def symlinked_workspace(self, tmp_path):
+        if os.name != "posix":
+            pytest.skip("workspace containment is POSIX-path based")
+        real = tmp_path / "real-ws"
+        real.mkdir()
+        link = tmp_path / "link-ws"
+        try:
+            os.symlink(real, link, target_is_directory=True)
+        except OSError:
+            pytest.skip("symlink creation not permitted")
+        return tmp_path, real, link
+
+    @pytest.mark.parametrize("workspace_kind", ["link", "real"])
+    @pytest.mark.parametrize("target_kind", ["link", "real"])
+    def test_workspace_internal_rm_allowed(
+        self, symlinked_workspace, workspace_kind: str, target_kind: str
+    ) -> None:
+        """四行矩阵：无论 workspace 与目标用哪种表示，工作区内 rm 都 ALLOW。"""
+        _, real, link = symlinked_workspace
+        workspace = link if workspace_kind == "link" else real
+        target = link if target_kind == "link" else real
+        guard = CommandGuard(workspace=str(workspace))
+        assert guard.check(f"rm -rf {target}/build") is CommandVerdict.ALLOW
+
+    @pytest.mark.parametrize("workspace_kind", ["link", "real"])
+    def test_workspace_prefix_collision_denied(
+        self, symlinked_workspace, workspace_kind: str
+    ) -> None:
+        tmp_path, real, link = symlinked_workspace
+        guard = CommandGuard(workspace=str(link if workspace_kind == "link" else real))
+        for target in (
+            tmp_path / "link-ws-evil",
+            tmp_path / "real-ws-evil",
+            tmp_path / "link-wsX",
+        ):
+            assert guard.check(f"rm -rf {target}") is CommandVerdict.DENY, target
+            assert guard.last_reason == "rm_target_escape"
+
+    @pytest.mark.parametrize("workspace_kind", ["link", "real"])
+    @pytest.mark.parametrize("target_kind", ["link", "real"])
+    def test_workspace_root_denied(
+        self, symlinked_workspace, workspace_kind: str, target_kind: str
+    ) -> None:
+        """删工作区本身：link/real 两种表示都 DENY。"""
+        _, real, link = symlinked_workspace
+        workspace = link if workspace_kind == "link" else real
+        target = link if target_kind == "link" else real
+        guard = CommandGuard(workspace=str(workspace))
+        assert guard.check(f"rm -rf {target}") is CommandVerdict.DENY
+        assert guard.last_reason == "rm_target_escape"
+
+    @pytest.mark.parametrize("form", ["link", "real"])
+    def test_dotdot_traversal_denied(self, symlinked_workspace, form: str) -> None:
+        _, real, link = symlinked_workspace
+        base = link if form == "link" else real
+        guard = CommandGuard(workspace=str(link))
+        assert guard.check(f"rm -rf {base}/../etc") is CommandVerdict.DENY
+        assert guard.last_reason == "rm_target_escape"
+
+    def test_workspace_internal_symlink_escape_denied(self, symlinked_workspace) -> None:
+        """工作区内 `escape -> outside`：字面在区内、realpath 在区外 ⇒ 保守 DENY。"""
+        tmp_path, real, _ = symlinked_workspace
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (real / "escape").symlink_to(outside, target_is_directory=True)
+        guard = CommandGuard(workspace=str(real))
+        for command in (f"rm -rf {real}/escape", f"rm -rf {real}/escape/"):
+            assert guard.check(command) is CommandVerdict.DENY, command
+            assert guard.last_reason == "rm_target_escape"
+
+    def test_symlink_dotdot_uses_real_resolution(self, symlinked_workspace) -> None:
+        """`escape/../victim` 必须按 POSIX 先跟随链接再折叠 `..`，不得词法折叠回区内。"""
+        tmp_path, real, _ = symlinked_workspace
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "victim").write_text("keep", encoding="utf-8")
+        (real / "escape").symlink_to(outside, target_is_directory=True)
+        guard = CommandGuard(workspace=str(real))
+        assert guard.check(f"rm -rf {real}/escape/../victim") is CommandVerdict.DENY
+        assert guard.last_reason == "rm_target_escape"
+
+    def test_symlink_loop_fails_closed(self, symlinked_workspace) -> None:
+        """循环链接放在工作区内，覆盖 helper 返回 None 的 fail-closed 分支。"""
+        _, real, _ = symlinked_workspace
+        loop = real / "loop"
+        loop.symlink_to(loop)
+        guard = CommandGuard(workspace=str(real))
+        assert guard.check(f"rm -rf {loop}/x") is CommandVerdict.DENY
+        assert guard.last_reason == "rm_target_escape"
+
+    @pytest.mark.parametrize("workspace_kind", ["link", "real"])
+    @pytest.mark.parametrize("target_kind", ["link", "real"])
+    def test_write_allowlist_uses_same_canonical_semantics(
+        self, symlinked_workspace, workspace_kind: str, target_kind: str
+    ) -> None:
+        """白名单与越界判定同源：两种 workspace 表示 × 两种目标表示都覆盖。"""
+        _, real, link = symlinked_workspace
+        workspace = link if workspace_kind == "link" else real
+        target = link if target_kind == "link" else real
+        guard = CommandGuard(workspace=str(workspace), allowed_write_paths=(".env",))
+        assert guard.check(f"tee {target}/.env") is CommandVerdict.ALLOW
+
+    def test_write_allowlist_prefix_collision_still_denied(
+        self, symlinked_workspace
+    ) -> None:
+        tmp_path, _, link = symlinked_workspace
+        guard = CommandGuard(workspace=str(link), allowed_write_paths=(".env",))
+        target = tmp_path / "link-ws-evil" / ".env"
+        assert guard.check(f"tee {target}") is CommandVerdict.DENY
+        assert guard.last_reason == "tee_target"
+
+    def test_write_allowlist_cannot_cover_symlink_escape(
+        self, symlinked_workspace
+    ) -> None:
+        """修复前按字面 `escape/.env` 可覆盖；realpath 在区外 ⇒ 不覆盖。"""
+        tmp_path, real, _ = symlinked_workspace
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (real / "escape").symlink_to(outside, target_is_directory=True)
+        guard = CommandGuard(
+            workspace=str(real), allowed_write_paths=("escape/.env",)
+        )
+        assert guard.check(f"tee {real}/escape/.env") is CommandVerdict.DENY
+        assert guard.last_reason == "tee_target"
+
+    def test_write_allowlist_matches_real_target_relative_path(
+        self, symlinked_workspace
+    ) -> None:
+        """白名单按真实目标的 workspace 相对路径匹配（fail-closed 收紧）。"""
+        _, real, _ = symlinked_workspace
+        (real / "config").mkdir()
+        (real / ".env").symlink_to(real / "config" / "dev.env")
+        literal = CommandGuard(workspace=str(real), allowed_write_paths=(".env",))
+        assert literal.check(f"tee {real}/.env") is CommandVerdict.DENY
+        assert literal.last_reason == "tee_target"
+        canonical = CommandGuard(
+            workspace=str(real), allowed_write_paths=("config/dev.env",)
+        )
+        assert canonical.check(f"tee {real}/.env") is CommandVerdict.ALLOW
 
 
 class TestSensitiveDotDirectories:

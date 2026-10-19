@@ -102,14 +102,52 @@ _DEVICE_EXEMPT = ("/dev/null", "/dev/stdout", "/dev/stderr")
 
 
 def _normalize_path(path: str) -> str:
-    """Normalize a raw command token for containment checks (issue #247).
+    """Lexically normalize a raw command token (issue #247).
 
     Resolves ``.``/``..`` segments so ``/tmp/ws/../etc`` cannot masquerade as
     a path inside ``/tmp/ws``. Relative overflows (``a/../../etc``) stay
     relative and therefore compare as "not contained" — the safe direction for
     the workspace check.
+
+    Lexical only: symlinks are NOT resolved. Workspace containment must use
+    ``_canonical_path()`` so both sides share the workspace's realpath
+    representation (issue #310).
     """
     return os.path.normpath(path)
+
+
+def _canonical_path(path: str) -> str | None:
+    """Canonical path used by workspace-containment checks (issue #310).
+
+    The workspace is stored as a real path (``Path.resolve()`` at
+    construction). Comparing it against a merely lexical command token rejects
+    targets inside a symlinked workspace and accepts paths that only *look*
+    inside while a symlink points elsewhere. Resolve POSIX absolute paths the
+    same way the workspace was resolved.
+
+    ``os.path.normpath`` is deliberately not applied first: it collapses
+    ``..`` *before* symlinks are followed, unlike POSIX resolution, so
+    ``<ws>/escape/../victim`` would keep masquerading as a workspace path.
+
+    ``strict=True`` first so symlink loops fail closed on every supported
+    Python (3.13+ non-strict ``resolve()`` returns the loop's literal path);
+    only a missing target (``FileNotFoundError``) falls back to non-strict
+    resolution. Relative paths stay lexical: the guard does not know the
+    command's cwd. ``None`` means an absolute path could not be resolved;
+    callers must fail closed.
+    """
+    if not path.startswith("/"):
+        return os.path.normpath(path)
+    try:
+        return str(Path(path).resolve(strict=True))
+    except FileNotFoundError:
+        pass
+    except (OSError, RuntimeError):
+        return None
+    try:
+        return str(Path(path).resolve(strict=False))
+    except (OSError, RuntimeError):
+        return None
 
 
 def _within(path: str, prefix: str) -> bool:
@@ -743,8 +781,10 @@ class CommandGuard:
         """
         if not self._allowed_write_paths or not self._workspace:
             return False
-        normalized = _normalize_path(_dequote(_expand_obfuscation(target)))
-        workspace = _normalize_path(self._workspace)
+        normalized = _canonical_path(_dequote(_expand_obfuscation(target)))
+        if normalized is None:
+            return False
+        workspace = self._workspace
         if normalized.startswith("/"):
             if not _within(normalized, workspace):
                 return False
@@ -1143,20 +1183,29 @@ class CommandGuard:
             return CommandVerdict.ALLOW
         for target in targets:
             # $IFS expands to whitespace, so "$IFS/" is effectively "/".
-            normalized = _normalize_path(target.replace("$IFS", ""))
-            if normalized in ("/", "$HOME", "~") or any(
-                _within(normalized, p) for p in _DENY_PATHS
+            raw_target = target.replace("$IFS", "")
+            # Protected paths and special tokens keep the lexical judgement:
+            # this change only unifies the workspace-containment comparison
+            # (issue #310), it does not realpath `_DENY_PATHS`.
+            lexical = _normalize_path(raw_target)
+            if lexical in ("/", "$HOME", "~") or any(
+                _within(lexical, p) for p in _DENY_PATHS
             ):
                 self.last_reason = "rm_target_escape"
                 return CommandVerdict.DENY
             if self._workspace:
-                ws = _normalize_path(self._workspace)
-                if normalized.startswith("/") and not _within(normalized, ws):
+                canonical = _canonical_path(raw_target)
+                if canonical is None:
+                    self.last_reason = "rm_target_escape"
+                    return CommandVerdict.DENY
+                if canonical.startswith("/") and not _within(
+                    canonical, self._workspace
+                ):
                     self.last_reason = "rm_target_escape"
                     return CommandVerdict.DENY
                 # Deleting the workspace root itself is as destructive as
                 # escaping it (fix-issue-247 Q1).
-                if normalized == ws:
+                if canonical == self._workspace:
                     self.last_reason = "rm_target_escape"
                     return CommandVerdict.DENY
         return CommandVerdict.ALLOW
