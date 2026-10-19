@@ -50,8 +50,8 @@
 
 ## 5. 实现后独立审阅闭环
 
-- [ ] 5.1 独立零记忆审阅，产出 `reviews/building-review.md`（含 `## 闭环出口`），收敛到 PASS。
-- [ ] 5.2 全部 medium+ 修复并补回归测试；low/nit 登记并写理由。
+- [x] 5.1 独立零记忆审阅，产出 `reviews/building-review.md`（含 `## 闭环出口`），收敛到 PASS（第 1 轮 medium+ 为空，low/nit 5 条已复核处置）。
+- [x] 5.2 全部 medium+ 修复并补回归测试；low/nit 登记并写理由（L-1～L-5 已修并复核 PASS）。
 
 ## 6. 收尾（合入后）
 

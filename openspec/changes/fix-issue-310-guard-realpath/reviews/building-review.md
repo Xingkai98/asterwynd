@@ -17,11 +17,35 @@
 ### low/nit 登记
 | id | severity | 问题 | 处置理由 |
 |---|---|---|---|
-| L-1 | low | `_canonical_path()` 未捕获 `ValueError`（路径内嵌 NUL）：`agent/tools/command_guard.py:142,148`。实测 `guard.check("rm -rf <ws>\x00x")` 在 master（`origin/master` 的同文件加载后实测）返回 `DENY/rm_target_escape`，本分支抛 `ValueError: lstat: embedded null character in path`。`BashTool.execute` 对 guard 调用无 try/except（`agent/tools/builtin/bash.py:117`），`AgentLoop._execute_single_tool` 兜底为错误结果且**不执行命令**（`agent/loop.py:1429-1432`）。 | 无 fail-open（命令不会执行），影响仅为错误呈现从 `permission_denied` 退化为普通 error；需构造含控制字符的输入。建议顺手改为 `except (OSError, RuntimeError, ValueError): return None`，一支 1 行硬化，不值得升 medium。 |
-| L-2 | low | `tasks.md` 1.5 要求用 `tee`、`echo K >> <ws>/.env`、`dd of=<ws>/.env` 三种写法验证白名单同源，新增测试只用了 `tee`（`tests/agent/tools/test_command_guard.py:407-414`），没有 symlink 工作区下的 `>>` / `dd of=` 行。 | reviewer 实测 `echo K >> <link>/.env` 与 `dd of=<link>/.env` 均 ALLOW、`escape` 目标均 DENY，三条调用点共享同一 `_allow_covers()`（`command_guard.py:784`），且 plain workspace 下已有 `>>`/`dd` 白名单用例（同文件 `:1095-1117`）。语义已被覆盖，属任务措辞与测试矩阵的粒度差；建议补两行 param 或修正任务文字，非必须。 |
-| L-3 | low | `tasks.md` 4.3 已标 `[x]`「矩阵记录进 `reviews/building-review.md`」，但提交 `39a9126` 时该文件并不存在（`git status` 干净、`git diff --name-only` 无此文件）；矩阵实际由 reviewer 复核并记录于本报告下文。 | 时序问题（报告由审阅者产出），本报告已补录完整矩阵，无代码/规格影响。 |
-| L-4 | nit | 模块顶部 docstring（`agent/tools/command_guard.py:16-22`）仍只写「按路径段比较 + 规范化」，未提工作区包含判定已改用 realpath；两个 helper 的 docstring（`:104-150`）是准确的。 | 不影响调用点选择——唯一涉及 workspace 的两个消费点都已接线正确；属文档一致性小债，后续触碰该文件时顺手补。 |
-| L-5 | nit | 四行正向矩阵的目标 `build` 是**已存在**目录（`tests/agent/tools/test_command_guard.py:329-337`），「目标尚不存在 → 非严格回退」在 `rm` 通道没有直接用例，只在 `tee <ws>/.env`（`.env` 不存在，`:407-414`）间接覆盖同一 helper 分支。 | 同一 helper 分支已被白名单用例覆盖；补一条 `rm -rf <ws>/missing/deep → ALLOW` 能更直观钉住 spec 的「目标尚不存在」条款，非必须。 |
+| L-1 | low | `_canonical_path()` 未捕获 `ValueError`（路径内嵌 NUL）：`agent/tools/command_guard.py:142,148`。实测 `guard.check("rm -rf <ws>\x00x")` 在 master（`origin/master` 的同文件加载后实测）返回 `DENY/rm_target_escape`，本分支抛 `ValueError: lstat: embedded null character in path`。`BashTool.execute` 对 guard 调用无 try/except（`agent/tools/builtin/bash.py:117`），`AgentLoop._execute_single_tool` 兜底为错误结果且**不执行命令**（`agent/loop.py:1429-1432`）。 | 无 fail-open（命令不会执行），影响仅为错误呈现从 `permission_denied` 退化为普通 error；需构造含控制字符的输入。建议顺手改为 `except (OSError, RuntimeError, ValueError): return None`，一支 1 行硬化，不值得升 medium。**复核（head c92a8db）：已修**（两个 resolve 分支补 `ValueError`，新增 NUL 回归测试）。 |
+| L-2 | low | `tasks.md` 1.5 要求用 `tee`、`echo K >> <ws>/.env`、`dd of=<ws>/.env` 三种写法验证白名单同源，新增测试只用了 `tee`（`tests/agent/tools/test_command_guard.py:407-414`），没有 symlink 工作区下的 `>>` / `dd of=` 行。 | reviewer 实测 `echo K >> <link>/.env` 与 `dd of=<link>/.env` 均 ALLOW、`escape` 目标均 DENY，三条调用点共享同一 `_allow_covers()`（`command_guard.py:784`），且 plain workspace 下已有 `>>`/`dd` 白名单用例（同文件 `:1095-1117`）。语义已被覆盖，属任务措辞与测试矩阵的粒度差；建议补两行 param 或修正任务文字，非必须。**复核（head c92a8db）：已修**（三种写形态 × link/real 双向参数化）。 |
+| L-3 | low | `tasks.md` 4.3 已标 `[x]`「矩阵记录进 `reviews/building-review.md`」，但提交 `39a9126` 时该文件并不存在（`git status` 干净、`git diff --name-only` 无此文件）；矩阵实际由 reviewer 复核并记录于本报告下文。 | 时序问题（报告由审阅者产出），本报告已补录完整矩阵，无代码/规格影响。**复核（head c92a8db）：已处置**（tasks 4.3 已指向本报告矩阵节）。 |
+| L-4 | nit | 模块顶部 docstring（`agent/tools/command_guard.py:16-22`）仍只写「按路径段比较 + 规范化」，未提工作区包含判定已改用 realpath；两个 helper 的 docstring（`:104-150`）是准确的。 | 不影响调用点选择——唯一涉及 workspace 的两个消费点都已接线正确；属文档一致性小债，后续触碰该文件时顺手补。**复核（head c92a8db）：已修**（模块 docstring 已补充 realpath 口径）。 |
+| L-5 | nit | 四行正向矩阵的目标 `build` 是**已存在**目录（`tests/agent/tools/test_command_guard.py:329-337`），「目标尚不存在 → 非严格回退」在 `rm` 通道没有直接用例，只在 `tee <ws>/.env`（`.env` 不存在，`:407-414`）间接覆盖同一 helper 分支。 | 同一 helper 分支已被白名单用例覆盖；补一条 `rm -rf <ws>/missing/deep → ALLOW` 能更直观钉住 spec 的「目标尚不存在」条款，非必须。**复核（head c92a8db）：已修**（新增缺失目标 ALLOW 回归）。 |
+
+### 审阅后 low/nit 复核
+复核基线：`39a9126..c92a8db`，diff 只含 4 个文件——`agent/tools/command_guard.py`（+ValueError/docstring）、`tests/agent/tools/test_command_guard.py`（新增/参数化）、`tasks.md`（4.3 措辞）、本报告；无 CI/规格/实现语义的额外改动。验证期**未扩大批次**，未发现新的 medium+，deferred 为空。
+
+- **L-1 ✅ 已修**：`_canonical_path()` 两个 resolve 分支均改为 `except (OSError, RuntimeError, ValueError)`（`agent/tools/command_guard.py:149,153`），返回 `None` ⇒ fail-closed。新增 `test_embedded_nul_fails_closed_without_raising`（`tests/agent/tools/test_command_guard.py:465`）。独立诊断：`_canonical_path(<ws>/bad\x00name)` 返回 `None`；`rm -rf <ws>/bad\x00name` 在 workspace=real 与 workspace=link 两种表示下均 `deny/rm_target_escape`，不再抛异常；`tee <ws>/.git/\x00`（带 allowlist）为 `deny/tee_target`，同样无异常。
+- **L-2 ✅ 已修**：`test_write_allowlist_uses_same_canonical_semantics` 现为 `tee` / `echo K >>` / `dd of=` × workspace {link, real} × target {link, real} 共 12 行（`:411`）；`test_write_allowlist_cannot_cover_symlink_escape` 按三种写形态参数化并分别断言 `tee_target` / `protected_redirect` / `dd_target`（`:442`）。实跑新类 34 passed，与作者声明一致。
+- **L-3 ✅ 已处置**：`tasks.md:46` 的 4.3 已改为「已由审阅者独立复核并记录进 `reviews/building-review.md` 的『符号链接命令级实测矩阵』节」，与本文 `## 符号链接命令级实测矩阵（tasks 4.3）` 对应，措辞与事实一致。
+- **L-4 ✅ 已修**：模块顶部 docstring（`agent/tools/command_guard.py:20-24`）已补充 workspace containment 比较 real paths、绝对目标走 `_canonical_path()`（strict-first，loops 时 fail-closed）、protected-path checks stay lexical；与实现及 spec 口径一致。
+- **L-5 ✅ 已修**：新增 `test_missing_target_inside_workspace_allowed`（`tests/agent/tools/test_command_guard.py:456`）；独立诊断 `<ws>/not-yet-created/deep` 在 workspace=real 下 ALLOW，经 link 表示 `<link>/missing/deep` 亦 ALLOW，`FileNotFoundError` 非严格回退生效。
+
+实跑记录：
+```text
+$ uv run python -m pytest -q tests/agent/tools/test_command_guard.py -k TestSymlinkedWorkspaceContainment -p no:cacheprovider
+34 passed, 272 deselected
+
+$ uv run python -m pytest -q tests/agent/tools/test_command_guard.py -p no:cacheprovider
+306 passed
+
+# 独立诊断（tmp_path 显式符号链接）
+_canonical_path(<ws>/bad\x00name)            → None
+rm -rf <ws>/bad\x00name（ws=real / link）     → deny/rm_target_escape（无异常）
+tee <ws>/.git/\x00（allowlist）              → deny/tee_target（无异常）
+rm -rf <ws>/not-yet-created/deep（real/link） → allow
+```
 
 ## 任务逐项验证
 
@@ -34,7 +58,7 @@
 - **1.2** ✅ 四行 ALLOW 矩阵为 `workspace_kind × target_kind` 参数化（`:329-337`），覆盖 link/real 双向组合。
 - **1.3** ✅ 前缀碰撞（`<ws>-evil`、`<ws>X`，`:340-353`）、`../etc`（`:367-372`）、根删除 link/real（`:355-365`）均有 DENY 断言并校验 `last_reason`。
 - **1.4** ✅ `escape` 无尾斜杠/带尾斜杠（`:374-383`）、`escape/../victim`（`:385-394`）、工作区内 `loop → loop`（`:396-405`）均 DENY；reviewer 另测互相循环 `loopa ↔ loopb` 同样 DENY。
-- **1.5** ⚠️ 部分满足：`tee` 四行矩阵、前缀碰撞、逃逸目标、`.env → config/dev.env` 双向匹配都有；`>>` 与 `dd of=` 的 symlink 行缺失（见 L-2）。reviewer 手工验证两种写法行为与 `tee` 一致。
+- **1.5** ✅ `tee` 四行矩阵、前缀碰撞、逃逸目标、`.env → config/dev.env` 双向匹配都有；`>>` 与 `dd of=` 的 symlink 行已在 `c92a8db` 补齐（见下节 L-2 复核）。
 - **1.6** ✅ 无提交态的红/绿记录，但 reviewer 以变异法复现：把 `_canonical_path` 退回 `os.path.normpath` 后新类 9 failed / 13 passed（正向行与逃逸/循环/白名单负例全红），恢复后全绿——「可红→绿」成立。
 - **1.7** ✅ 同上变异验证（9 红即变异应红项；恢复后 294 passed）。
 - **2.1** ✅ `_canonical_path()`（`command_guard.py:119-150`）实现与设计与 tasks 逐字一致：POSIX 绝对路径**直接** strict-first `Path.resolve()`（无 normpath 前置）；`FileNotFoundError` 回退非严格；其余 `OSError`/`RuntimeError` → `None`；相对路径 `os.path.normpath`。
@@ -49,7 +73,7 @@
 - **3.5** ✅ `docs/adr/ADR-0008-guard-workspace-realpath-containment.md` 存在：Decision 5 条 + 4 个备选（含双表示、normpath-first、仅非严格 resolve）及拒绝理由，并含 Revisit Conditions。
 - **4.1** ✅ reviewer 实测 294 passed（272 基线 + 新类 22 条），与 tasks 的 272 基线口径吻合。
 - **4.2** ✅ 作者记录 2 failed / 4383 passed / 9 skipped（2 条既有 `/tmp` 环境失败）；reviewer 按指示未重跑全量，定向套件无回归，未发现矛盾证据。
-- **4.3** ⚠️ 提交时未落盘矩阵，记录时序问题（见 L-3）；reviewer 的独立矩阵见下文「符号链接命令级实测矩阵」。
+- **4.3** ✅ 矩阵由 reviewer 独立复核并记录于下文「符号链接命令级实测矩阵」；`tasks.md` 4.3 已在 `c92a8db` 指向该节（见下节 L-3 复核）。
 - **4.4** ✅ reviewer 重跑 `openspec validate --all --strict`：29 passed / 0 failed。
 - **4.5** ✅ reviewer 重跑瘦 checker `--base-ref origin/master --require-base`：EXIT=0（`Project rule checks passed`）。
 - **4.6** ✅ 作者记录 benchmark smoke EXIT=0；本 change 未改工具策略接线，reviewer 未重跑。
@@ -117,6 +141,7 @@ workspace ∈ {`link-ws → real-ws`, `real-ws`} × 命令目标 ∈ {link 表�
 
 ## 收口确认
 - 本批 medium+ 数量：0（low/nit 5 条已登记，其中 L-2/L-3 为任务/文档粒度差，L-1 为 fail-closed 方向的一行健壮性建议）。deferred 为空，第 1 轮收敛。
+- low/nit 复核（head `c92a8db`）：L-1～L-5 全部已修/已处置（见「审阅后 low/nit 复核」），low/nit 复核无新增 medium+，deferred 为空。
 
 ## 闭环出口
 PASS
