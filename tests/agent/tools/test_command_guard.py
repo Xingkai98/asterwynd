@@ -402,6 +402,29 @@ class TestSymlinkedWorkspaceContainment:
         assert guard.check(f"rm -rf {loop}/x") is CommandVerdict.DENY
         assert guard.last_reason == "rm_target_escape"
 
+    def test_protected_root_as_workspace_realpath_allows_internal_rm(
+        self, tmp_path
+    ) -> None:
+        """ADV-L1 钉住：workspace 的 realpath 落在受保护根时，其内部目标 ALLOW。
+
+        归档 change `fix-issue-310-guard-realpath` 的 Non-Goals 明确不处理「workspace
+        的 realpath 本身落在受保护根」这一病态配置：工作区是受信任配置，`_DENY_PATHS`
+        保持词法判定，而 canonical 目标 `/etc/passwd` 落在 workspace `/etc` 内且不等于
+        根，故 `rm -rf <link>/passwd` 为 ALLOW（修复前因工作区表示不一致反而 DENY）。
+        这是有意的边界，不是遗漏；若未来要求「受保护根即使作为 workspace 也拒绝」，
+        须另立 change 把受保护路径判定也 realpath 化。仅调用 `check()` 判定，不执行命令。
+        """
+        if os.name != "posix":
+            pytest.skip("workspace containment is POSIX-path based")
+        link = tmp_path / "etc-link"
+        try:
+            os.symlink("/etc", link, target_is_directory=True)
+        except OSError:
+            pytest.skip("symlink creation not permitted")
+        guard = CommandGuard(workspace=str(link))
+        assert guard.check(f"rm -rf {link}/passwd") is CommandVerdict.ALLOW
+        assert guard.last_reason is None
+
     @pytest.mark.parametrize(
         "command_t",
         ["tee {t}/.env", "echo K >> {t}/.env", "dd of={t}/.env"],
