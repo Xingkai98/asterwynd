@@ -1,0 +1,14 @@
+{
+  "schema": "witnessloop/review-manifest@v1",
+  "change_id": "2026-10-19-fix-issue-310-guard-realpath",
+  "stage": "grill-adversarial",
+  "reviewer_run_id": "274d81c4-e470-4f93-beea-a77c5ec4ed4f",
+  "author_run_id": "main-session-fix-issue-310",
+  "base_sha": "c2d2ba4ceb5a7ffc7e2ea8b15cd314d3c40b0edf",
+  "head_sha": "1d6f01d81d2f3401694a3eb77b5c727af1a66895",
+  "tasks_hash": "b3f3c13131b8e70a4082ad1e08e20149a1b9f3e03305226949eea4b1e45f3606",
+  "spec_hash": "d6b015646aad2e2a22db3f492bd434e19c228e69471a5be07037f6e805d05ca1",
+  "diff_hash": "0505c99c5ce0defdbc89c835241384b915707f47ed0ff949895eb6f2f03a1841",
+  "report_hash": "d0f4adc0f836063da0547a26144e6f041151d3183404948f9b570bc089492c13",
+  "report_path": "reviews/grill-adversarial.md"
+}
