@@ -11,4 +11,4 @@ permissions:
 
 jobs:
   gate:
-    uses: Xingkai98/witnessloop/.github/workflows/gate.yml@c9b281167ad20b63e4832ad9ab8510964a2adc60
+    uses: Xingkai98/witnessloop/.github/workflows/gate.yml@v1.7.1

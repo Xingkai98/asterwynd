@@ -378,7 +378,7 @@ uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --req
 - **产物 4 个**：`.witnessloop/policy.json`（定制 policy）、`.witnessloop/init-manifest.json`（init 台账）、`.github/workflows/witnessloop.yml`（caller）、`.github/witnessloop-tests.txt`（测试执行点 = `uv run --extra dev pytest -q`）。`.github/workflows/ci.yml` **未被触碰**。
 - **required 只有 `gate / check`**（阶段 C 翻开关，issue #305，2026-10-17）：`master` 的 `required_status_checks.contexts` = `["gate / check"]`。本仓自建的 `validate` / `benchmark-gate` / `windows-platform` **照跑、只是不再拦合并**。
 - **降级代价（须知）**：只由本仓 checker 承载的 RIR / Impact Analysis / benchmark smoke / 归档点完成度 / backlog 一致性 / building review 的 `## 闭环出口` PASS 判据 **不再拦合并**。逐条分叉清单见 issue #305 的阶段 C 前置 comment。⇒ **不要把「CI 绿」读成「项目规则已满足」**。
-- **caller 钉 `@v1.7.0`**：包版本由 reusable workflow 自己的 `job.workflow_sha` 推导（witnessloop issue #30 的修复），**不需要** `with: witnessloop-ref:`；升级 = `witnessloop init --gate-ref <新 ref>`（幂等，重写 caller + 同步台账）。
+- **caller 钉 `@v1.7.1`**：包版本由 reusable workflow 按 ref 形态推导——tag 用 `job.workflow_ref` 的 `refs/tags/<tag>`（annotated tag 的 `job.workflow_sha` 是 tag object，不是 commit），分支 / commit pin 才用 `job.workflow_sha`（witnessloop issue #30 / #42 的修复），**不需要** `with: witnessloop-ref:`；升级 = `witnessloop init --gate-ref <新 ref> --policy .witnessloop/policy.json`（幂等，重写 caller + 同步台账；本仓定制 policy 必须带 `--policy`，缺它会先写后失败）。
 - **旧门禁主体已删除**：`workflow_state.py` / `agent/workflow/*` / `flow-policy.json` / `workflow_methods.json` / 旧 `workflow_guard.py` 已移除。`validate` job 仍跑 pytest + OpenSpec validate + **瘦项目规则 checker**（RIR / Impact / benchmark smoke / tasks 与归档点完成度 / backlog / building exit）；`scripts/platform_gate.py` 保留 branch protection 配置即代码；本地 Bash 写前拦截由 `scripts/bash_write_guard.py` 提供。
 - **已知红（阶段 A 历史记录，已处置）**：① `add-minimal-tui-runtime-view`（无 `reviews/`）已由 `retire-tui-proposal`（issue #319 PR B）**原地废弃**：目录保留原样（不删、不写、不加标记；witnessloop 对纯 docs-only 删除/加标记分别实测 3/3 项 finding；含 code_hits 的删除实验为 5 项），backlog 移除，ADR-0006 留痕；② 阶段 A 的 change `witnessloop-adoption` 当时缺 witnessloop 形态 manifest（该 change **已归档**，此条只作历史记录）。两条都属「**缺 manifest**」这一类，不是配置错误。
 - **`reviews/` 的一致状态（阶段 A 实测，仍然适用）**：一个 change 的 `reviews/` 下，**每份 `.md` 都必须被某份 witnessloop 形态 manifest 的 `report_path` 绑定**，否则触发孤儿规则——阶段 A 实测「只落一部分」比「一份都不落」更红（2 条 → 14 条 → 16 条）。阶段 C 之后 `gate / check` 是 required ⇒ 一个 change 要判绿就必须把 `reviews/` 落齐并全部绑定（`grill` / `grill-adversarial` / `building` 三份 manifest）。
@@ -386,17 +386,19 @@ uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --req
 
 ### 本地跑 `check`
 
-**必须锚定 CI 实际使用的 v1.7.0**。注意 `v1.7.0` 是 annotated tag：tag object `00192ab`
-对应 commit `c9b2811`；本机 `/home/happy/witnessloop` 的当前 HEAD **不是** v1.7.0，不要用。
+**必须锚定 CI 实际使用的 v1.7.1**。注意 `v1.7.1` 是 annotated tag：tag object `c4f681a7`
+对应 commit `07bf23b3`；tag 形态下 `job.workflow_sha` 是 tag object，不是 commit——这正是上游
+issue #42 的根因。不要用本机某个旧克隆或 PATH 上的旧 CLI 代替。
 
 ```bash
-# 本机可执行锚点（实测 DEFAULT_GATE_REF=@v1.7.0）
-/home/happy/wl170/bin/witnessloop check --root . --base origin/master --head HEAD
-# 或者：git -C <witnessloop> checkout v1.7.0 && cd <witnessloop> && uv run witnessloop check --root <本仓根>
+# 与 CI 的 gate.yml 同源：从 tag 安装 v1.7.1 再跑 check
+uvx --from "git+https://github.com/Xingkai98/witnessloop@refs/tags/v1.7.1" \
+  witnessloop check --root . --base origin/master --head HEAD
 ```
 
-原因：PATH 上还有一份旧 uv-tool 版本（实测 0.1.0，没有 `guard` 子命令）；用错版本会得到
-假绿/假红。
+首行应显示 `requested_revision=refs/tags/v1.7.1，commit_id=07bf23b3…`。原因：PATH 上还有一份
+旧 uv-tool 版本（实测 0.1.0，没有 `--policy` / `guard` 等新语义）；本地源码 / editable 安装没有
+PEP 610 `vcs_info`，`check` 只会打印 `<未知>`；用错版本会得到假绿/假红。
 
 ### 本地 `guard` 的前置核验（必做）
 

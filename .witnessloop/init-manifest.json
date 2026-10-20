@@ -4,7 +4,7 @@
   "created_at": "2026-10-13T13:16:59+00:00",
   "base_ref": "witnessloop-adoption/2026-10-13",
   "base_sha": "4e32bd9904b6121c33df75d2450e97d72d35a007",
-  "gate_ref": "Xingkai98/witnessloop/.github/workflows/gate.yml@v1.7.0",
+  "gate_ref": "Xingkai98/witnessloop/.github/workflows/gate.yml@v1.7.1",
   "created_files": [
     {
       "path": ".witnessloop/policy.json",
@@ -12,7 +12,7 @@
     },
     {
       "path": ".github/workflows/witnessloop.yml",
-      "sha256": "cd4e45b8ef7e180adc9a445f851ab9a4d8782fbe2615d824525054378540e059"
+      "sha256": "2e8216acdcd345652f9f2a1951ecfb66e785f3cfb2da45b2ee14e25f90a7d523"
     },
     {
       "path": ".witnessloop/init-manifest.json",

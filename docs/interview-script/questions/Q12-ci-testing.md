@@ -25,7 +25,7 @@ GitHub Actions (.github/workflows/ci.yml)
   ├─ benchmark-gate job: gate-smoke benchmark
   └─ windows-platform job: Windows 平台语义回归
 GitHub Actions (.github/workflows/witnessloop.yml)   ← required（阶段 C 之后）
-  └─ gate job → reusable gate.yml@v1.7.0 的 check job
+  └─ gate job → reusable gate.yml@v1.7.1 的 check job
      （合入结论只由它决定；上面三个 job 照跑但不拦）
 ```
 

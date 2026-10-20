@@ -4,7 +4,7 @@
 
 定义开发流程门禁的**承载边界**：哪些门禁由外部工具 witnessloop 承载、哪些由本仓的瘦 checker / Bash guard / platform gate 承载，以及从自建切换到接入 witnessloop 的三阶段（A 影子接入 / B 真实小需求验证 / C 真打开）各自的约束。
 
-**本仓已走到阶段 C（真打开，2026-10-17）**：接入产物已落进仓库——`.witnessloop/policy.json`（定制 policy）、`.witnessloop/init-manifest.json`（init 台账）、`.github/workflows/witnessloop.yml`（caller，钉 `@v1.7.0`）、`.github/witnessloop-tests.txt`（测试执行点）；`master` 的唯一 required check 是 `gate / check`。旧门禁主体（`workflow_state.py`、`agent/workflow/*`、`flow-policy.json`、`workflow_methods.json`、旧 `workflow_guard.py`）已删除。现行形态是：witnessloop 承载流程骨架；`scripts/check_openspec_artifacts.py` 只承载 6 条项目规则（RIR / Impact Analysis / benchmark smoke / tasks 与归档点完成度 / backlog 一致性 / building review 的 `## 闭环出口` PASS）；`scripts/bash_write_guard.py` 承载本地 Bash 写前拦截；`scripts/platform_gate.py` 保留 branch protection 的配置即代码与漂移检测（见 `platform-gate` 能力域）。`master` 的 required 集合与其「降级不关闭」不变量由 `platform-gate` 能力域规定，本规格不重复。
+**本仓已走到阶段 C（真打开，2026-10-17）**：接入产物已落进仓库——`.witnessloop/policy.json`（定制 policy）、`.witnessloop/init-manifest.json`（init 台账）、`.github/workflows/witnessloop.yml`（caller，钉 `@v1.7.1`）、`.github/witnessloop-tests.txt`（测试执行点）；`master` 的唯一 required check 是 `gate / check`。旧门禁主体（`workflow_state.py`、`agent/workflow/*`、`flow-policy.json`、`workflow_methods.json`、旧 `workflow_guard.py`）已删除。现行形态是：witnessloop 承载流程骨架；`scripts/check_openspec_artifacts.py` 只承载 6 条项目规则（RIR / Impact Analysis / benchmark smoke / tasks 与归档点完成度 / backlog 一致性 / building review 的 `## 闭环出口` PASS）；`scripts/bash_write_guard.py` 承载本地 Bash 写前拦截；`scripts/platform_gate.py` 保留 branch protection 的配置即代码与漂移检测（见 `platform-gate` 能力域）。`master` 的 required 集合与其「降级不关闭」不变量由 `platform-gate` 能力域规定，本规格不重复。
 
 **阶段划分**：A 影子接入（只跑不拦）→ B 用一个真实小需求在新流程上跑一遍（取得「值不值得真打开」的判断依据）→ C 真打开（勾 required，由独立 change 承载）。阶段 A 的实测证据见已归档 change `openspec/changes/archive/2026-10-13-witnessloop-adoption/reviews/acceptance-stage-a.md`。
 
@@ -222,7 +222,7 @@ asterwynd 形态的**生产与写通道 SHALL 已删除**：`agent/workflow/revi
 - **AND** SHALL NOT 仅以「两个 guard 都生效」的推理代替实测
 ### Requirement: 阶段 C 翻开关后的 required 形态
 
-接入 witnessloop 的三个阶段（A 影子接入 / B 真实小需求验证 / C 真打开）SHALL 以阶段 C 的形态为**当前**形态。caller workflow SHALL 钉住 witnessloop 的**具体发版 ref**（当前 `v1.7.0`），且 SHALL NOT 依赖 `with: witnessloop-ref:` 另行钉包版本——包 ref 由被复用的 `gate.yml` 自身的 commit 决定。
+接入 witnessloop 的三个阶段（A 影子接入 / B 真实小需求验证 / C 真打开）SHALL 以阶段 C 的形态为**当前**形态。caller workflow SHALL 钉住 witnessloop 的**具体发版 ref**（当前 `v1.7.1`），且 SHALL NOT 依赖 `with: witnessloop-ref:` 另行钉包版本——包 ref 由被复用的 `gate.yml` 按 ref 形态推导：**tag** 取 `job.workflow_ref` 的 `refs/tags/<tag>`（annotated tag 的 `job.workflow_sha` 是 tag object，不是 commit，uv 的新版本会拒绝；精确阈值见上游 issue #42）；**分支 / commit pin** 取 `job.workflow_sha`。应急 commit pin SHALL NOT 构成稳态：它 SHALL 在同一收尾批内由正规 change 回钉到已发布的 tag ref，并同步 `.witnessloop/init-manifest.json` 台账。
 
 > **required 集合与其「降级不关闭」不变量不在本规格重复**：`master` 的 required 是哪些、以及「降级为非必过的检查仍须运行」这条约束，SHALL 由 `platform-gate` 能力域规定（该能力域是本仓平台面的唯一规格源）。本规格只规定**接入形态**本身（caller 怎么钉、受管路径的后果、证据形态）。**理由**：同一条规范写两处是未来的漂移点——改一处漏一处不会被任何门禁发现。
 
@@ -235,9 +235,9 @@ asterwynd 形态的**生产与写通道 SHALL 已删除**：`agent/workflow/revi
 #### Scenario: caller 钉住的 ref 同时决定包版本
 
 - **WHEN** 检查 `.github/workflows/witnessloop.yml`
-- **THEN** 该文件的 `uses:` SHALL 钉住具体发版 ref（形如 `Xingkai98/witnessloop/.github/workflows/gate.yml@v1.7.0`），SHALL NOT 用滚动 tag（`@v1`）或分支名
-- **AND** caller SHALL NOT 出现 `with: witnessloop-ref:`——包 ref 的缺省由 `job.workflow_sha` 推导（上游 issue #30 的修复），升级动作 SHALL 是 `witnessloop init --gate-ref <新 ref>` 一处改动
-- **AND** 升级 SHALL 同时重写 caller 与同步 `.witnessloop/init-manifest.json` 台账（该动作幂等）
+- **THEN** 该文件的 `uses:` SHALL 钉住具体发版 ref（形如 `Xingkai98/witnessloop/.github/workflows/gate.yml@v1.7.1`），SHALL NOT 用滚动 tag（`@v1`）、分支名或长期 commit pin
+- **AND** caller SHALL NOT 出现 `with: witnessloop-ref:`——包 ref 的缺省由被复用 `gate.yml` 的 ref 推导（tag 用 `job.workflow_ref` 的 tag ref，分支 / commit pin 用 `job.workflow_sha`；上游 issue #30 / #42 的修复），升级动作 SHALL 是 `witnessloop init --gate-ref <新 ref>` 一处改动（本仓是定制 policy 仓，命令 SHALL 同时带 `--policy .witnessloop/policy.json`）
+- **AND** 升级 SHALL 同时重写 caller 与同步 `.witnessloop/init-manifest.json` 台账（该动作幂等），SHALL NOT 只改其中一边
 
 #### Scenario: 阶段 C 之后的改动受 require_change_for 约束
 
@@ -253,6 +253,14 @@ asterwynd 形态的**生产与写通道 SHALL 已删除**：`agent/workflow/revi
 - **AND** SHALL NOT 要求、产出或校验 asterwynd 形态（`reviews/<phase>-review-manifest.json`，字段 `phase`）
 - **AND** witnessloop 形态的证据 SHALL 在归档 move **之后**、用**归档目录名**（`<YYYY-MM-DD>-<change-id>`）重建——否则 manifest 里的 `change_id` 与目录名不符
 - **AND** `reviews/` 下每一份 `.md` SHALL 被某份 witnessloop 形态 manifest 的 `report_path` 绑定（否则触发孤儿规则）
+
+#### Scenario: 应急 commit pin 必须回钉
+
+- **GIVEN** 上游发版出现故障，接入方为解除 `gate / check` 硬红而临时把 caller 钉到 commit
+- **WHEN** 上游发布包含修复的新 tag
+- **THEN** 接入方 SHALL 由正规 change 把 caller 回钉到新 tag，并用 `witnessloop init --gate-ref <新 tag> --policy .witnessloop/policy.json` 同步台账（本仓为定制 policy 仓，缺 `--policy` 会先写后失败）
+- **AND** 该 change SHALL 补 `.witnessloop/**` 的受保护写入解释事件
+- **AND** 合入后的 `gate / check` 日志 SHALL 证明包 ref 来自 tag ref（`refs/tags/<tag>`），不是 tag object sha 或 commit pin
 
 ### Requirement: 翻开关这一动作自身必须具备 change 记录
 
