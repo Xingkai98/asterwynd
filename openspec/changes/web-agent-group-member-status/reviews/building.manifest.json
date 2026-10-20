@@ -4,11 +4,11 @@
   "stage": "building",
   "reviewer_run_id": "6300ba25-d925-48e9-b59f-5e826b5a90d5",
   "author_run_id": "main-session-web-agent-group-member-status",
-  "base_sha": "48d25f065a2dd1ba92a1c7d0bc5a9a10a28d1988",
-  "head_sha": "ff1565d19f78cd05f83d2658079bfdedb75ef5bc",
+  "base_sha": "6808fcd9f40384148fa3eebee0ad568bfc5cfecc",
+  "head_sha": "a4c97b9249657b8e3ba19af137b6fb4dd97d0285",
   "tasks_hash": "b9a9c8ffca1c615b0af3aac9936f6e61a9a98658d15153c82877c410b2dbdf13",
   "spec_hash": "61ec454b30d8bda93709021e102533a69b03fe29bd70de98facd517b6039b0a1",
-  "diff_hash": "3bafd2aa4ab648ababc63778d405f9991e4d4794bd7bed9eb9780ad9b253183d",
+  "diff_hash": "61564c4a6d81eb453afccf42b76fb847c4f1f9955f94c4a25d0eb44a1b25f7de",
   "report_hash": "b4ddf99fa21fefb9241a04b806bd878133d13fcf43222c4fdd035f961a9a3da0",
   "report_path": "reviews/building-review.md"
 }
