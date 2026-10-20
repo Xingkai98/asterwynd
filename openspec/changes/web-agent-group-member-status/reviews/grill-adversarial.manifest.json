@@ -5,10 +5,10 @@
   "reviewer_run_id": "650cd2d7-158f-42e9-aa14-ca91293002df",
   "author_run_id": "main-session-web-agent-group-member-status",
   "base_sha": "48d25f065a2dd1ba92a1c7d0bc5a9a10a28d1988",
-  "head_sha": "80d06124159181e67a59baa8b89d78c0adf7ccd4",
+  "head_sha": "ff1565d19f78cd05f83d2658079bfdedb75ef5bc",
   "tasks_hash": "b9a9c8ffca1c615b0af3aac9936f6e61a9a98658d15153c82877c410b2dbdf13",
   "spec_hash": "61ec454b30d8bda93709021e102533a69b03fe29bd70de98facd517b6039b0a1",
-  "diff_hash": "829d35e37cea2372e23c0fc9b5d3a8a8a605d0fd18044df65e7e3306d3aacf9f",
+  "diff_hash": "3bafd2aa4ab648ababc63778d405f9991e4d4794bd7bed9eb9780ad9b253183d",
   "report_hash": "7a090220a5555e3e7f064129a5ce1e23f68296c036f404b3b131d61e09eacbc3",
   "report_path": "reviews/grill-adversarial.md"
 }
