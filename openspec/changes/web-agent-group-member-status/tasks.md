@@ -181,7 +181,7 @@
 - [x] 5.3 把 delta 施加进 `openspec/specs/multi-agent-collaboration/spec.md` 与
   `openspec/specs/web-ui/spec.md`，记录 Requirement 计数，写 `current_spec_synced` 事件；
   OpenSpec strict validate 通过。
-- [ ] 5.4 `docs/openspec-change-backlog.md` 登记本 change（issue #307）并写 `backlog_updated`
+- [x] 5.4 `docs/openspec-change-backlog.md` 登记本 change（issue #307）并写 `backlog_updated`
   事件；归档前移除。
 - [x] 5.5 文档影响检查：change 自身文档、`docs/architecture.md` 群聊小节、`README.md` /
   `README_EN.md`（如需同步）、`docs/interview-script/`（建议性）、`AGENTS.md` / `CONTEXT.md`
