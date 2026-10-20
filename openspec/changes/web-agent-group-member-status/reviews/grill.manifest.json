@@ -4,11 +4,11 @@
   "stage": "grill",
   "reviewer_run_id": "27577826-661f-463c-874c-e0a7ee913678",
   "author_run_id": "main-session-web-agent-group-member-status",
-  "base_sha": "9640f912d1d3d644b69f532f6dccbc2025abaed3",
-  "head_sha": "4c908d3700f57803b2da6524f00eb32743c75f5a",
+  "base_sha": "f6211cdf47d67433dc294fb38106425df96067e8",
+  "head_sha": "06a003453ebd1db5b55433a489ddad51cdeb9801",
   "tasks_hash": "1b4bcbcdc2c341c7c9f7220d272995c1051b00125363dc570bf53a9d91ac504d",
   "spec_hash": "61ec454b30d8bda93709021e102533a69b03fe29bd70de98facd517b6039b0a1",
-  "diff_hash": "d52f43c85b0bfee1521f1668a64e413575f7a5da4825c807469887c8e0d6b90f",
+  "diff_hash": "67c65d9ea95349af78438d93555f888f78d3fbdb05767cbadffb35fa9b3cd318",
   "report_hash": "9cccd3434dc82de0af5c80f35fe1fd708d6fc7795b2dfad52373b66f3ac20704",
   "report_path": "reviews/grill-design.md"
 }
