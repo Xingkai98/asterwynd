@@ -4,11 +4,11 @@
   "stage": "grill-adversarial",
   "reviewer_run_id": "650cd2d7-158f-42e9-aa14-ca91293002df",
   "author_run_id": "main-session-web-agent-group-member-status",
-  "base_sha": "6808fcd9f40384148fa3eebee0ad568bfc5cfecc",
-  "head_sha": "a4c97b9249657b8e3ba19af137b6fb4dd97d0285",
-  "tasks_hash": "b9a9c8ffca1c615b0af3aac9936f6e61a9a98658d15153c82877c410b2dbdf13",
+  "base_sha": "9640f912d1d3d644b69f532f6dccbc2025abaed3",
+  "head_sha": "a4b84cb5729a38e21a759d47b2c4f27d845360eb",
+  "tasks_hash": "1b4bcbcdc2c341c7c9f7220d272995c1051b00125363dc570bf53a9d91ac504d",
   "spec_hash": "61ec454b30d8bda93709021e102533a69b03fe29bd70de98facd517b6039b0a1",
-  "diff_hash": "61564c4a6d81eb453afccf42b76fb847c4f1f9955f94c4a25d0eb44a1b25f7de",
+  "diff_hash": "09dbd53b0c0af10b50f76ee2cd6b939709ba4826e38ff51269bb270df82863fd",
   "report_hash": "7a090220a5555e3e7f064129a5ce1e23f68296c036f404b3b131d61e09eacbc3",
   "report_path": "reviews/grill-adversarial.md"
 }
