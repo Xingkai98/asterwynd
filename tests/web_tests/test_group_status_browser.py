@@ -328,8 +328,23 @@ async def test_group_presence_mobile_q1_strip(page, group_server):
     assert await page.eval_on_selector("#group-room-timeline", "e => e.scrollTop") == scroll_before
 
     # presence 重绘（时间线事件触发）必须保留横向滚动位置。
+    # 给 list.textContent 的 setter 注入一次强制布局：Chromium 对「同步清空后立即重建」
+    # 本来就会保留 scrollLeft，不强制布局的话恢复逻辑删掉也会假绿。
     await page.evaluate(
-        "() => { document.querySelector('#group-room-presence').scrollLeft = 40; }"
+        """() => {
+          const list = document.querySelector('#group-presence-list');
+          const scroller = document.querySelector('#group-room-presence');
+          const desc = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
+          Object.defineProperty(list, 'textContent', {
+            configurable: true,
+            get() { return desc.get.call(this); },
+            set(value) {
+              desc.set.call(this, value);
+              void scroller.scrollWidth;   // 清空后强制布局，scrollLeft 归 0
+            },
+          });
+          scroller.scrollLeft = 40;
+        }"""
     )
     await _push(group_server, room_id, "member_post", {
         "persona_id": personas["戊"],
