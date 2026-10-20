@@ -29,7 +29,7 @@
 - [x] 2.2 把 delta 同步进 `openspec/specs/dev-workflow-gate/spec.md`（Requirement 正文 + Purpose 段 `@v1.7.0` 现状句）；未改动的 Requirement 逐字节保留。同步时把 delta 的 MODIFIED 块**原样替换**进主 spec，并显式断言主 spec 该 Requirement 块与 delta 块逐字节一致（5 个 Scenario；`openspec validate` 单独不检查这一项）。
 - [x] 2.3 `docs/development-guide.md`：caller 版本与包 ref 推导改为 v1.7.1；本地 `check` 锚点改为 `uvx --from "git+https://github.com/Xingkai98/witnessloop@refs/tags/v1.7.1" witnessloop check ...`（替换 `/home/happy/wl170/bin/witnessloop` 这类本机路径）；注明 annotated tag object 与 commit 的区别。
 - [x] 2.4 `docs/interview-script/questions/Q12-ci-testing.md`：流水线图 `gate.yml@v1.7.0` → `@v1.7.1`。
-- [ ] 2.5 关键词扫描：运行
+- [x] 2.5 关键词扫描（**已跑**：当前态零残留；剩余 `v1.7.0` 命中均在下方 allowlist）：运行
   `rg -n 'v1\.7\.0|c9b2811|/home/happy/wl170' .github/workflows/witnessloop.yml .witnessloop/init-manifest.json openspec/specs/dev-workflow-gate/spec.md docs/development-guide.md docs/interview-script/questions/Q12-ci-testing.md`
   只对**当前态**命中断言零残留；历史命中 allowlist（不改）：`docs/adr/ADR-0006-…`、`openspec/specs/dev-workflow-gate/spec.md:73/:191/:195`（历史证据 / 「v1.7.0 实测」）、`docs/development-guide.md:385`（「v1.7.0 实测」）、`docs/development-guide.md:443`（2026-10-18 的 v1.7.0 实测记录）。行号以当前文件为准，扫描命令是权威。
 
