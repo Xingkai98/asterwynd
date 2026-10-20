@@ -28,11 +28,17 @@ class FakeRunner:
         self.gate_sessions: set[str] | None = None
         self.started = asyncio.Event()
         self.timeouts: list[float | None] = []
+        #: 可选的进度信号脚本（session_id -> [(kind, data), ...]）。
+        self.progress_script: dict[str, list[tuple[str, dict]]] = {}
+        self.progress_calls: list[tuple[str, str, dict]] = []
 
     def push(self, persona_id: str, *outcomes: TurnOutcome) -> None:
         self.script.setdefault(persona_id, []).extend(outcomes)
 
-    async def run(self, session_id, message, *, timeout=None, silent_marker=None):
+    async def run(
+        self, session_id, message, *, timeout=None, silent_marker=None,
+        on_progress=None,
+    ):
         self.calls.append((session_id, message))
         self.timeouts.append(timeout)
         self.started.set()
@@ -40,6 +46,12 @@ class FakeRunner:
             self.gate_sessions is None or session_id in self.gate_sessions
         ):
             await self.gate.wait()
+        if on_progress is not None:
+            for kind, data in self.progress_script.get(session_id, []):
+                self.progress_calls.append((session_id, kind, data))
+                await on_progress(kind, data)
+                # 给合并发射器一个让出点，测试才能观察到中间表。
+                await asyncio.sleep(0)
         queue = self.script.get(session_id)
         outcome = queue.pop(0) if queue else self.default
         if outcome.status == "text" and silent_marker and outcome.text.strip() == silent_marker:
@@ -574,3 +586,239 @@ class TestSessionCreationFailure:
         assert [sid for sid, _ in runner.calls] == ["room-pB", "room-pC"]
         assert any("PA" in e.text for e in _systems(store, room))
         assert result.termination == "completed"
+
+
+class _EventedOrchestrator(RoomOrchestrator):
+    """测试用编排器：把 on_event 收进列表，便于断言状态协议。"""
+
+    def __init__(self, **kwargs):
+        self.events: list[tuple[str, dict]] = []
+        user_sink = kwargs.pop("on_event", None)
+
+        async def sink(event_type, data):
+            self.events.append((event_type, data))
+            if user_sink is not None:
+                await user_sink(event_type, data)
+
+        super().__init__(on_event=sink, **kwargs)
+
+    def by_type(self, event_type):
+        return [data for kind, data in self.events if kind == event_type]
+
+
+class _FailingResolver(FakeResolver):
+    def __init__(self, fail_ids):
+        super().__init__()
+        self.fail_ids = set(fail_ids)
+
+    async def ensure_room_session(self, room_id, persona_id):
+        if persona_id in self.fail_ids:
+            raise RuntimeError("session unavailable")
+        return await super().ensure_room_session(room_id, persona_id)
+
+
+class _RaisingRunner(FakeRunner):
+    async def run(self, session_id, message, *, timeout=None, silent_marker=None,
+                  on_progress=None):
+        await super().run(
+            session_id, message, timeout=timeout, silent_marker=silent_marker,
+            on_progress=on_progress,
+        )
+        raise RuntimeError("boom")
+
+
+class _GatedReview:
+    def __init__(self):
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls = 0
+
+    async def on_member_turn(self, *, room_id, persona_id, outcome):
+        return None
+
+    async def on_round_end(self, *, room_id):
+        self.calls += 1
+        self.entered.set()
+        await self.release.wait()
+
+
+async def _wait_teardowns(orch, limit=200):
+    for _ in range(limit):
+        if not orch._teardown_tasks:
+            return
+        await asyncio.sleep(0)
+    await asyncio.gather(*list(orch._teardown_tasks), return_exceptions=True)
+
+
+class TestMemberStatusEvents:
+    @pytest.mark.asyncio
+    async def test_normal_turn_emits_full_tables_and_resets(self, team):
+        store, room, runner, resolver, _ = team
+        orch = _EventedOrchestrator(store=store, resolver=resolver, runner=runner)
+        runner.default = TurnOutcome(status="text", text="答")
+        runner.progress_script["room-pA"] = [
+            ("run_started", {}),
+            ("iteration_started", {}),
+            ("assistant_delta", {}),
+            ("tool_started", {"tool_id": "t1", "tool_name": "Bash"}),
+            ("tool_finished", {"tool_id": "t1", "tool_name": "Bash"}),
+            ("iteration_started", {}),
+            ("run_completed", {}),
+        ]
+        await orch.submit_user_message(room.id, "你好")
+
+        tables = orch.by_type("member_status")
+        assert tables, "至少应发布一次 member_status"
+        phases = [s["phase"] for data in tables for s in data["statuses"]
+                  if s["persona_id"] == "pA"]
+        assert "thinking" in phases
+        assert "typing" in phases
+        assert "tool" in phases
+        tool_tables = [s for data in tables for s in data["statuses"]
+                       if s["phase"] == "tool" and s["persona_id"] == "pA"]
+        assert any(s["tools"] == ["Bash"] for s in tool_tables)
+
+        terminals = orch.by_type("member_post")
+        assert len(terminals) == 1
+        assert isinstance(terminals[0]["status_seq"], int)
+        statuses, seq = orch.status_snapshot(room.id)
+        assert statuses == []
+        assert seq >= terminals[0]["status_seq"]
+
+    @pytest.mark.asyncio
+    async def test_empty_output_emits_member_silent_and_idles(self, team):
+        store, room, runner, resolver, _ = team
+        orch = _EventedOrchestrator(store=store, resolver=resolver, runner=runner)
+        runner.default = TurnOutcome(status="text", text="")
+        await orch.submit_user_message(room.id, "你好")
+        silent = orch.by_type("member_silent")
+        assert len(silent) == 1
+        assert orch.status_snapshot(room.id)[0] == []
+
+    @pytest.mark.asyncio
+    async def test_session_creation_failure_emits_member_failed_with_name(self, team):
+        store, room, runner, _, _ = team
+        resolver = _FailingResolver({"pA"})
+        orch = _EventedOrchestrator(store=store, resolver=resolver, runner=runner)
+        runner.default = TurnOutcome(status="silent")
+        await orch.submit_user_message(room.id, "你好")
+        failed = orch.by_type("member_failed")
+        assert len(failed) == 1
+        assert failed[0]["status"] == "failed"
+        assert failed[0]["name"] == "PA"
+        assert orch.status_snapshot(room.id)[0] == []
+
+    @pytest.mark.asyncio
+    async def test_cancelled_round_emits_round_ended_cancelled(self, team):
+        store, room, runner, resolver, _ = team
+        orch = _EventedOrchestrator(store=store, resolver=resolver, runner=runner)
+        runner.gate = asyncio.Event()
+        task = asyncio.create_task(orch.submit_user_message(room.id, "你好"))
+        await runner.started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await _wait_teardowns(orch)
+        ended = orch.by_type("round_ended")
+        assert len(ended) == 1
+        assert ended[0]["termination"] == "cancelled"
+        assert isinstance(ended[0]["status_seq"], int)
+        assert orch.status_snapshot(room.id)[0] == []
+
+    @pytest.mark.asyncio
+    async def test_unexpected_exception_emits_round_ended_error(self, team):
+        store, room, runner, resolver, _ = team
+        orch = _EventedOrchestrator(store=store, resolver=resolver, runner=runner)
+        raising = _RaisingRunner()
+        orch._runner = raising
+        raising.default = TurnOutcome(status="silent")
+        with pytest.raises(RuntimeError):
+            await orch.submit_user_message(room.id, "你好")
+        await _wait_teardowns(orch)
+        ended = orch.by_type("round_ended")
+        assert len(ended) == 1
+        assert ended[0]["termination"] == "error"
+        assert orch.status_snapshot(room.id)[0] == []
+
+    @pytest.mark.asyncio
+    async def test_status_only_emitted_on_change(self, team):
+        store, room, runner, resolver, _ = team
+        orch = _EventedOrchestrator(store=store, resolver=resolver, runner=runner)
+        runner.default = TurnOutcome(status="text", text="答")
+        runner.progress_script["room-pA"] = [
+            ("iteration_started", {}),
+            ("assistant_delta", {}),
+            ("assistant_delta", {}),
+            ("assistant_delta", {}),
+        ]
+        await orch.submit_user_message(room.id, "你好")
+        tables = orch.by_type("member_status")
+        typing = [
+            data for data in tables
+            if any(s["phase"] == "typing" for s in data["statuses"])
+        ]
+        assert len(typing) == 1
+
+    @pytest.mark.asyncio
+    async def test_cross_round_terminal_has_lower_seq_than_new_round(self, team):
+        store, room, runner, resolver, _ = team
+        review = _GatedReview()
+        orch = _EventedOrchestrator(
+            store=store, resolver=resolver, runner=runner, review_sink=review
+        )
+        runner.default = TurnOutcome(status="text", text="答")
+        first = asyncio.create_task(orch.submit_user_message(room.id, "第一轮"))
+        await review.entered.wait()          # 第一轮已 pop，旧 round_ended 尚未发出
+        before = max(
+            (data["status_seq"] for data in orch.by_type("member_status")),
+            default=0,
+        )
+        second = asyncio.create_task(orch.submit_user_message(room.id, "第二轮"))
+        new_seq = None
+        for _ in range(200):
+            newer = [
+                data["status_seq"] for data in orch.by_type("member_status")
+                if data["status_seq"] > before
+            ]
+            if newer and len(runner.calls) >= 2:
+                new_seq = max(newer)
+                break
+            await asyncio.sleep(0)
+        assert orch.is_round_active(room.id) is True
+        assert new_seq is not None, "第二轮必须发出比旧轮更高的状态 seq"
+        review.release.set()
+        await asyncio.gather(first, second)
+        ended = sorted(
+            (data["status_seq"] for data in orch.by_type("round_ended"))
+        )
+        assert len(ended) == 2
+        assert ended[0] < new_seq, "旧轮终态必须早于新一轮的首个状态 seq"
+
+    @pytest.mark.asyncio
+    async def test_cancelling_released_round_does_not_touch_new_round(self, team):
+        store, room, runner, resolver, _ = team
+        review = _GatedReview()
+        orch = _EventedOrchestrator(
+            store=store, resolver=resolver, runner=runner, review_sink=review
+        )
+        runner.default = TurnOutcome(status="text", text="答")
+        first = asyncio.create_task(orch.submit_user_message(room.id, "第一轮"))
+        await review.entered.wait()
+        # 第一轮已跑完 runner；让第二轮的 runner 阻塞，确保取消第一轮时第二轮仍 active。
+        gate = asyncio.Event()
+        runner.gate = gate
+        second = asyncio.create_task(orch.submit_user_message(room.id, "第二轮"))
+        for _ in range(200):
+            if len(runner.calls) >= 2:
+                break
+            await asyncio.sleep(0)
+        assert orch.is_round_active(room.id) is True
+        before = orch.status_snapshot(room.id)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        assert orch.is_round_active(room.id) is True
+        assert orch.status_snapshot(room.id) == before
+        gate.set()
+        review.release.set()
+        await second

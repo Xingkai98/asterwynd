@@ -78,5 +78,6 @@ SubAgentManager.create_subagent (manager.py:175) → run_subagent (209) → _lau
 - **分层靠依赖倒置**：编排器在 `agent/team/`，只依赖 `SessionRunner`（`run(session_id, message) -> TurnOutcome` 四态返回值）与 `SessionResolver` 两个抽象，由 `web/team.py` 实现并注入——`agent/` 不需要反向 import `web/`（全仓唯一反向点是 CLI 入口的延迟 import）。
 - **一条我特意设计成「返回值而非异常」的契约**：`TurnOutcome.status` 四态（`text`/`silent`/`failed`/`timeout`），且 `text` **只来自本次 run**。反例是「读 session 最后一条 assistant」——同 session 并发 run 被 `run_lock` 拒时那次 run 不产生任何新文本，取「最后一条」会把**陈旧内容**当本轮发言写进房间日志。这类「看起来等价、实际会静默错答」的坑适合当面试的深挖点。
 - **成本控制三件套**：静默哨兵（`[PASS]` 文本，不新增控制工具污染工具面）、每轮每成员发言上限 + 轮次上限（**三出口**：走完 / 达上限 / 全部剩余成员失败或超时）、单轮超时 240s。
+- **成员状态可观测**（issue #307）：编排器把 AgentLoop 钩子与流式事件归约成 `idle` / `running` / `thinking` / `typing` / `tool`（优先级 `tool > typing > thinking > running > idle`），只发**完整状态表 + 房间级 `status_seq`**、不转发 token；终态按 seq 权威重置，重连用 `room_state` 快照；桌面左侧 presence，390px 下为顶部 56px 横向成员条。
 - **游标是两份、不互相替代**：注入游标 `seen` 在**回合开始**推进（含静默回合，否则连续静默成员的切片边界永不前进、同一段内容被反复注入、上下文无界增长——与 issue #278 同类）；review 游标 `reviewed` 只被记忆 review 推进。用 `seen` 当「落后补齐」的基准会让落后恒为 0、补齐永不触发。
 - **单聊 scope 的记忆游标不能用消息表下标**：上下文压缩会就地缩短消息表、session resume 会重建消息表，下标语义必漂移（压缩后游标越过表尾 ⇒ review 永久停摆）。改用 scope 目录内的**持久化待 review 缓冲**，与消息表下标解耦。

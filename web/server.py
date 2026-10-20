@@ -101,6 +101,35 @@ async def bind_pending_interaction_channel(
     return handle
 
 
+async def _room_handshake(
+    lock: asyncio.Lock,
+    *,
+    build_payload,
+    subscribe,
+    send_raw,
+    unsubscribe,
+):
+    """房间 WS 握手：持锁构造快照 → 订阅 → 发首帧。
+
+    订阅后的事件广播走 ``send``（同一把锁），因此会等待首帧发送完成；构造快照与
+    订阅之间没有 await，订阅前发生的事件已经反映在快照里。握手失败时清理订阅。
+    抽成独立函数是为了让「快照必须首帧」这条顺序不变量能被确定性单测。
+    """
+    token = None
+    await lock.acquire()
+    try:
+        payload = build_payload()
+        token = subscribe()
+        await send_raw(payload)
+        return token
+    except Exception:
+        if token is not None:
+            unsubscribe(token)
+        raise
+    finally:
+        lock.release()
+
+
 def create_app(
     llm,
     mode: str | None = None,
@@ -648,19 +677,40 @@ def create_app(
             await ws.close()
             return
 
-        token = room_bus.subscribe(room_id, ws.send_json)
-        await ws.send_json({
-            "type": "room_state",
-            "data": {
-                "workspace": str(ws_path),
-                "room": _room_payload(room),
-                "members": team_service.room_members(ws_path, room_id),
-                "timeline": team_service.room_timeline(ws_path, room_id),
-                "round_active": team_service.team_for(ws_path).orchestrator.is_round_active(room_id),
-            },
-        })
+        orchestrator = team_service.team_for(ws_path).orchestrator
+        # 每连接发送锁：快照必须首帧，且订阅后的广播不能与 pong/快照并发写同一 WS。
+        send_lock = asyncio.Lock()
+
+        async def send(payload: dict) -> None:
+            async with send_lock:
+                await ws.send_json(payload)
+
         rounds: set[asyncio.Task] = set()
+        token = None
         try:
+            def _build_room_state() -> dict:
+                member_statuses, status_seq = orchestrator.status_snapshot(room_id)
+                return {
+                    "type": "room_state",
+                    "data": {
+                        "workspace": str(ws_path),
+                        "room": _room_payload(room),
+                        "members": team_service.room_members(ws_path, room_id),
+                        "timeline": team_service.room_timeline(ws_path, room_id),
+                        "round_active": orchestrator.is_round_active(room_id),
+                        "member_statuses": member_statuses,
+                        "status_seq": status_seq,
+                    },
+                }
+
+            token = await _room_handshake(
+                send_lock,
+                build_payload=_build_room_state,
+                subscribe=lambda: room_bus.subscribe(room_id, send),
+                send_raw=ws.send_json,
+                unsubscribe=lambda t: room_bus.unsubscribe(room_id, t),
+            )
+
             while True:
                 try:
                     raw = await ws.receive_json()
@@ -687,13 +737,14 @@ def create_app(
                     rounds.add(task)
                     task.add_done_callback(rounds.discard)
                 elif msg_type == "ping":
-                    await ws.send_json({"type": "pong"})
+                    await send({"type": "pong"})
         except WebSocketDisconnect:
             logger.info("room websocket disconnected: %s", room_id)
         except Exception:  # noqa: BLE001 - 连接层异常不冒泡成 500
             logger.debug("room websocket error for %s", room_id, exc_info=True)
         finally:
-            room_bus.unsubscribe(room_id, token)
+            if token is not None:
+                room_bus.unsubscribe(room_id, token)
             for task in list(rounds):
                 if not task.done():
                     task.cancel()

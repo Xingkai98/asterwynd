@@ -24,6 +24,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Protocol
 
+from agent.team.member_status import MemberStatus, reduce_signal
 from agent.team.models import Persona, Room, RoomEntry
 from agent.team.roomlog import RoomLog, render_lines
 from agent.team.runner import (
@@ -293,6 +294,13 @@ class RoomOrchestrator:
         self._review_sink = review_sink
         self._on_event = on_event
         self._rounds: dict[str, _RoundState] = {}
+        #: 每房间的完整非空闲状态表 / 房间级单调序号 / 待发射标记 / 在途发射任务。
+        self._statuses: dict[str, dict[str, MemberStatus]] = {}
+        self._status_seq: dict[str, int] = {}
+        self._status_dirty: dict[str, set[str]] = {}
+        self._status_tasks: dict[str, asyncio.Task] = {}
+        #: 取消/异常 teardown 的后台 task 强引用（事件循环不回收在途 task）。
+        self._teardown_tasks: set[asyncio.Task] = set()
 
     # ------------------------------------------------------------------
     # 公共入口
@@ -350,6 +358,7 @@ class RoomOrchestrator:
         # `_rounds` 仍是空的，于是两轮并存（正是 Decision 5 要禁止的），且第二轮会
         # 覆盖第一轮的 state、让 `is_round_active` 在轮中报 false。
         self._rounds[room.id] = state
+        teardown_seq: int | None = None
         try:
             entry = log.append_user(opening_text)      # 同步：不引入 await
             state.start_seq = entry.seq
@@ -358,37 +367,63 @@ class RoomOrchestrator:
                 "queued": False,
             })
             await self._drive(state)
+
+            # termination 与 limit system 条目在任何 reset/pop/await 之前同步完成：
+            # 它们一定排在任何新一轮用户消息之前。
+            if state.turns >= state.limit and state.index < len(state.slots):
+                state.systems.append(log.append_system(LIMIT_ENTRY_TEXT))
+                termination = TERMINATION_LIMIT
+            elif not state.posts and state.failures:
+                termination = TERMINATION_ALL_FAILED
+            else:
+                termination = TERMINATION_COMPLETED
+
+            # 先同步重置并释放认领（两者之间无 await），再 flush / review / 终态。
+            # 释放后新一轮可以启动；旧终态 seq 更低，客户端会丢弃。
+            teardown_seq = self._reset_room_statuses(room.id)
+            self._release_round(room.id, state)
+            await self._flush_status_emits(room.id)
+
+            if self._review_sink is not None:
+                try:
+                    await self._review_sink.on_round_end(room_id=room.id)
+                except Exception:  # noqa: BLE001 - review 失败 SHALL NOT 中断轮次
+                    logger.exception("记忆 review 的落后补齐调度失败（已忽略）")
+
+            await self._emit("round_ended", {
+                "room_id": room.id,
+                "termination": termination,
+                "limit": state.limit,
+                "status_seq": teardown_seq,
+            })
+            return RoundResult(
+                room_id=room.id,
+                queued=False,
+                termination=termination,
+                posts=list(state.posts),
+                systems=list(state.systems),
+                slots=list(state.slots),
+                limit=state.limit,
+            )
+        except asyncio.CancelledError:
+            if self._rounds.get(room.id) is state:
+                if teardown_seq is None:
+                    teardown_seq = self._reset_room_statuses(room.id)
+                self._schedule_teardown(
+                    room.id, teardown_seq, "cancelled", state.limit
+                )
+            raise
+        except Exception:
+            if self._rounds.get(room.id) is state:
+                if teardown_seq is None:
+                    teardown_seq = self._reset_room_statuses(room.id)
+                self._schedule_teardown(room.id, teardown_seq, "error", state.limit)
+            logger.exception("群聊轮次异常终止（已尽力通知房间）")
+            raise
         finally:
-            self._rounds.pop(room.id, None)
-
-        if state.turns >= state.limit and state.index < len(state.slots):
-            state.systems.append(log.append_system(LIMIT_ENTRY_TEXT))
-            termination = TERMINATION_LIMIT
-        elif not state.posts and state.failures:
-            termination = TERMINATION_ALL_FAILED
-        else:
-            termination = TERMINATION_COMPLETED
-
-        if self._review_sink is not None:
-            try:
-                await self._review_sink.on_round_end(room_id=room.id)
-            except Exception:  # noqa: BLE001 - review 失败 SHALL NOT 中断轮次
-                logger.exception("记忆 review 的落后补齐调度失败（已忽略）")
-
-        await self._emit("round_ended", {
-            "room_id": room.id,
-            "termination": termination,
-            "limit": state.limit,
-        })
-        return RoundResult(
-            room_id=room.id,
-            queued=False,
-            termination=termination,
-            posts=list(state.posts),
-            systems=list(state.systems),
-            slots=list(state.slots),
-            limit=state.limit,
-        )
+            if teardown_seq is None and self._rounds.get(room.id) is state:
+                self._reset_room_statuses(room.id)
+            self._release_round(room.id, state)
 
     async def _drive(self, state: _RoundState) -> None:
         while state.index < len(state.slots):
@@ -412,79 +447,279 @@ class RoomOrchestrator:
         persona = roster.get(persona_id)
         name = persona.name if persona and persona.name else persona_id
 
+        # slot 认领即 running：覆盖 ensure_room_session / prompt 构造的空窗。
+        self._set_signal(state.room_id, persona_id, "slot_started", {})
         try:
-            session_id = await self._resolver.ensure_room_session(
-                state.room_id, persona_id
-            )
-        except Exception as exc:  # noqa: BLE001 - 单个成员建会话失败不挂死整轮
-            logger.warning("成员 %s 的群内会话创建失败: %s", persona_id, exc)
-            state.failures += 1
-            state.systems.append(log.append_system(f"成员 {name} 运行失败：会话不可用"))
-            return
-
-        # 回合开始：先读切片（用**旧**游标），再推进游标（含静默/超时回合）。
-        view = log.build_injection(persona_id, round_start=state.start_seq)
-        log.advance_seen(persona_id)
-
-        prompt = build_member_prompt(
-            room=room,
-            persona_id=persona_id,
-            roster=roster,
-            view=view,
-            slot_index=state.index,
-            slot_total=len(state.slots),
-        )
-        state.turns += 1
-        state.per_member_turns[persona_id] = state.per_member_turns.get(persona_id, 0) + 1
-
-        await self._emit("member_speaking", {
-            "room_id": state.room_id, "persona_id": persona_id, "name": name,
-        })
-        outcome = await self._runner.run(
-            session_id, prompt,
-            timeout=self._turn_timeout,
-            silent_marker=SILENT_MARKER,
-        )
-
-        if outcome.status == "silent":
-            await self._emit("member_silent", {
-                "room_id": state.room_id, "persona_id": persona_id,
-            })
-        elif outcome.status in ("failed", "timeout"):
-            state.failures += 1
-            reason = "超时" if outcome.status == "timeout" else (
-                outcome.message or outcome.code or "运行失败"
-            )
-            state.systems.append(
-                log.append_system(f"成员 {name} 运行失败：{reason}")
-            )
-            await self._emit("member_failed", {
-                "room_id": state.room_id, "persona_id": persona_id,
-                "status": outcome.status, "reason": reason,
-            })
-        else:
-            text = outcome.text.strip()
-            if text:
-                entry = log.append_post(persona_id, text)
-                state.posts.append(entry)
-                await self._emit("member_post", {
-                    "room_id": state.room_id, "persona_id": persona_id,
-                    "speaker": persona_id, "text": text, "seq": entry.seq,
-                })
-                self._append_called_slots(state, room, text, speaker_id=persona_id)
-            else:
-                # 空产出等价于静默（不与 failed 混同：模型确实跑完了）。
-                outcome = TurnOutcome(status="silent")
-
-        # review 排期**排在发言落日志之后**：review 读的是房间日志切片，先入日志
-        # 才不会漏掉刚发出的这条（Decision 17：仅实际发言的回合触发）。
-        if self._review_sink is not None:
             try:
-                await self._review_sink.on_member_turn(
-                    room_id=state.room_id, persona_id=persona_id, outcome=outcome
+                session_id = await self._resolver.ensure_room_session(
+                    state.room_id, persona_id
                 )
-            except Exception:  # noqa: BLE001 - review 排期失败 SHALL NOT 中断轮次
-                logger.exception("记忆 review 排期失败（已忽略）")
+            except Exception as exc:  # noqa: BLE001 - 单个成员建会话失败不挂死整轮
+                logger.warning("成员 %s 的群内会话创建失败: %s", persona_id, exc)
+                state.failures += 1
+                state.systems.append(
+                    log.append_system(f"成员 {name} 运行失败：会话不可用")
+                )
+                await self._finish_member(
+                    state.room_id, persona_id, "member_failed",
+                    {"status": "failed", "reason": "会话不可用", "name": name},
+                )
+                return
+
+            # 回合开始：先读切片（用**旧**游标），再推进游标（含静默/超时回合）。
+            view = log.build_injection(persona_id, round_start=state.start_seq)
+            log.advance_seen(persona_id)
+
+            prompt = build_member_prompt(
+                room=room,
+                persona_id=persona_id,
+                roster=roster,
+                view=view,
+                slot_index=state.index,
+                slot_total=len(state.slots),
+            )
+            state.turns += 1
+            state.per_member_turns[persona_id] = (
+                state.per_member_turns.get(persona_id, 0) + 1
+            )
+
+            await self._emit("member_speaking", {
+                "room_id": state.room_id, "persona_id": persona_id, "name": name,
+                "status_seq": self._status_seq.get(state.room_id, 0),
+            })
+
+            async def on_progress(kind: str, data: dict) -> None:
+                self._set_signal(state.room_id, persona_id, kind, data or {})
+
+            outcome = await self._runner.run(
+                session_id, prompt,
+                timeout=self._turn_timeout,
+                silent_marker=SILENT_MARKER,
+                on_progress=on_progress,
+            )
+
+            if outcome.status == "silent":
+                await self._finish_member(
+                    state.room_id, persona_id, "member_silent", {}
+                )
+            elif outcome.status in ("failed", "timeout"):
+                state.failures += 1
+                reason = "超时" if outcome.status == "timeout" else (
+                    outcome.message or outcome.code or "运行失败"
+                )
+                state.systems.append(
+                    log.append_system(f"成员 {name} 运行失败：{reason}")
+                )
+                await self._finish_member(
+                    state.room_id, persona_id, "member_failed",
+                    {
+                        "status": outcome.status,
+                        "reason": reason,
+                        "name": name,
+                    },
+                )
+            else:
+                text = outcome.text.strip()
+                if text:
+                    entry = log.append_post(persona_id, text)
+                    state.posts.append(entry)
+                    await self._finish_member(
+                        state.room_id, persona_id, "member_post",
+                        {
+                            "speaker": persona_id,
+                            "text": text,
+                            "seq": entry.seq,
+                        },
+                    )
+                    self._append_called_slots(
+                        state, room, text, speaker_id=persona_id
+                    )
+                else:
+                    # 空产出等价于静默（不与 failed 混同：模型确实跑完了）。
+                    # 生产 WebSessionRunner 已把空文本归一为 silent；这里是编排器层的
+                    # 防御性契约，覆盖自定义 runner。
+                    outcome = TurnOutcome(status="silent")
+                    await self._finish_member(
+                        state.room_id, persona_id, "member_silent", {}
+                    )
+
+            # review 排期**排在发言落日志之后**：review 读的是房间日志切片，先入日志
+            # 才不会漏掉刚发出的这条（Decision 17：仅实际发言的回合触发）。
+            if self._review_sink is not None:
+                try:
+                    await self._review_sink.on_member_turn(
+                        room_id=state.room_id, persona_id=persona_id, outcome=outcome
+                    )
+                except Exception:  # noqa: BLE001 - review 排期失败 SHALL NOT 中断轮次
+                    logger.exception("记忆 review 排期失败（已忽略）")
+        finally:
+            # 幂等兜底：任何遗漏出口/取消/意外异常都不把成员留在忙。
+            self._reset_member(state.room_id, persona_id)
+
+    # ------------------------------------------------------------------
+    # 成员运行状态（change web-agent-group-member-status）
+    # ------------------------------------------------------------------
+
+    def _status_table(self, room_id: str) -> dict[str, MemberStatus]:
+        return self._statuses.setdefault(room_id, {})
+
+    def _set_signal(
+        self, room_id: str, persona_id: str, kind: str, data: dict | None = None
+    ) -> None:
+        """同步归约一个进度信号；有变化才递增房间级 seq 并调度全量表事件。"""
+        table = self._status_table(room_id)
+        new = reduce_signal(table.get(persona_id), kind, data)
+        if new is None:
+            return
+        if new.is_idle:
+            table.pop(persona_id, None)
+        else:
+            table[persona_id] = new
+        self._status_seq[room_id] = self._status_seq.get(room_id, 0) + 1
+        self._mark_status_dirty(room_id, persona_id)
+
+    def _mark_status_dirty(self, room_id: str, persona_id: str) -> None:
+        self._status_dirty.setdefault(room_id, set()).add(persona_id)
+        self._schedule_status_emit(room_id)
+
+    def _schedule_status_emit(self, room_id: str) -> None:
+        if self._on_event is None:
+            return
+        task = self._status_tasks.get(room_id)
+        if task is not None and not task.done():
+            return
+        self._status_tasks[room_id] = asyncio.create_task(
+            self._drain_status(room_id)
+        )
+
+    async def _drain_status(self, room_id: str) -> None:
+        """合并发射：循环直到没有新变化；每次读取**当前完整表 + 当前 seq**。"""
+        try:
+            while True:
+                dirty = self._status_dirty.pop(room_id, None)
+                if not dirty:
+                    break
+                table = self._statuses.get(room_id, {})
+                seq = self._status_seq.get(room_id, 0)
+                statuses = [
+                    status.as_dict(pid)
+                    for pid, status in table.items()
+                    if not status.is_idle
+                ]
+                await self._emit("member_status", {
+                    "room_id": room_id,
+                    "status_seq": seq,
+                    "statuses": statuses,
+                })
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - 发射失败不得打断成员 run
+            logger.exception("成员状态发射失败（已忽略）")
+        finally:
+            current = asyncio.current_task()
+            if self._status_tasks.get(room_id) is current:
+                self._status_tasks.pop(room_id, None)
+            if self._status_dirty.get(room_id):
+                self._schedule_status_emit(room_id)
+
+    async def _flush_status_emits(self, room_id: str) -> None:
+        """等待当前在途的发射任务完成；测试与终态顺序的确定性抓手。"""
+        for _ in range(10):
+            task = self._status_tasks.get(room_id)
+            if task is not None and not task.done():
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    logger.exception("等待成员状态发射失败（已忽略）")
+                continue
+            if self._status_dirty.get(room_id):
+                self._schedule_status_emit(room_id)
+                task = self._status_tasks.get(room_id)
+                if task is not None and not task.done():
+                    continue
+            break
+
+    def _reset_member(self, room_id: str, persona_id: str) -> int:
+        """幂等重置一个成员：表未变时返回当前 seq，不递增、不标脏。"""
+        table = self._statuses.get(room_id)
+        if table and persona_id in table:
+            table.pop(persona_id, None)
+            self._status_seq[room_id] = self._status_seq.get(room_id, 0) + 1
+            self._mark_status_dirty(room_id, persona_id)
+        return self._status_seq.get(room_id, 0)
+
+    def _reset_room_statuses(self, room_id: str) -> int:
+        """幂等清空房间状态表：空表时返回当前 seq。"""
+        table = self._statuses.get(room_id)
+        if table:
+            table.clear()
+            self._status_seq[room_id] = self._status_seq.get(room_id, 0) + 1
+            self._mark_status_dirty(room_id, "__room__")
+        return self._status_seq.get(room_id, 0)
+
+    def status_snapshot(self, room_id: str) -> tuple[list[dict], int]:
+        """返回 (非空闲状态表副本, 当前房间级 seq)，供 room_state 使用。"""
+        table = self._statuses.get(room_id, {})
+        statuses = [
+            status.as_dict(pid)
+            for pid, status in table.items()
+            if not status.is_idle
+        ]
+        return statuses, self._status_seq.get(room_id, 0)
+
+    def _release_round(self, room_id: str, state: _RoundState) -> None:
+        """仅当仍持有认领时才释放，避免误删 flush 期间启动的新轮。"""
+        if self._rounds.get(room_id) is state:
+            del self._rounds[room_id]
+
+    async def _finish_member(
+        self,
+        room_id: str,
+        persona_id: str,
+        event_type: str,
+        data: dict,
+    ) -> None:
+        """统一终态出口：同步重置 -> seq -> flush -> 用新 seq 发终态。"""
+        seq = self._reset_member(room_id, persona_id)
+        await self._flush_status_emits(room_id)
+        payload = dict(data)
+        payload.update({
+            "room_id": room_id,
+            "persona_id": persona_id,
+            "status_seq": seq,
+        })
+        await self._emit(event_type, payload)
+
+    def _schedule_teardown(
+        self, room_id: str, status_seq: int, termination: str, limit: int
+    ) -> None:
+        """取消/意外异常的 status-only teardown；强引用后台 task + 有界等待。"""
+        async def _run() -> None:
+            try:
+                await asyncio.wait_for(
+                    self._flush_status_emits(room_id), timeout=2.0
+                )
+                await asyncio.wait_for(
+                    self._emit("round_ended", {
+                        "room_id": room_id,
+                        "termination": termination,
+                        "limit": limit,
+                        "status_seq": status_seq,
+                    }),
+                    timeout=2.0,
+                )
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                logger.warning("群聊轮次 teardown 超时（%s）", room_id)
+            except Exception:  # noqa: BLE001 - teardown 尽力而为
+                logger.exception("群聊轮次 teardown 失败（已忽略）")
+
+        task = asyncio.create_task(_run())
+        self._teardown_tasks.add(task)
+        task.add_done_callback(self._teardown_tasks.discard)
 
     # ------------------------------------------------------------------
     # slot 追加（@ 接力）

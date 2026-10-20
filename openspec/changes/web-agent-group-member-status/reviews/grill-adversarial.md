@@ -57,6 +57,7 @@
 
 - 设计对抗环收口：R6 无 high/medium；T1/L1–L8 已修复或合理处置；X1/N1–N6/F1–F13 关键项
   未被破坏；门禁通过。
-- **PASS 不等于写码许可**：`design.md` 的 Open Questions Q1（移动端形态）、Q2（失败标记）、
-  Q3（issue「多成员并发」的解释）仍需停轮由用户明确答复；答复写入
-  `reviews/grill-design.md` 的 `## User Confirmation` 后，才允许进入实现/测试代码。
+- **停轮确认已完成（2026-10-20）**：Q1/Q2/Q3 用户全部选 **A**（移动端 56px 横向条；失败立即
+  回空闲；接受每人独立一行、串行执行）。逐条答复见 `reviews/grill-design.md` 的
+  `## User Confirmation`，生效口径见 `design.md` 的 `## User Rulings (2026-10-20)`。
+  设计环 PASS + 停轮确认完成，允许进入实现（TDD）。

@@ -2183,3 +2183,166 @@ main { flex: 1; min-height: 0; overflow: hidden; }
 .group-member-option { display: flex; flex-direction: row; align-items: center; gap: 4px; font-size: 13px; }
 .group-dialog-error { color: #d9534f; font-size: 12px; min-height: 16px; }
 .group-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ---- 群聊成员状态（change web-agent-group-member-status） ---- */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.group-room-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 8px;
+}
+.group-presence {
+  width: 208px;
+  flex: 0 0 208px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.group-presence-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted, #888);
+  padding: 2px 4px 8px;
+}
+.group-presence-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.group-presence-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px;
+  border-radius: 6px;
+}
+.group-presence-row.stale { opacity: 0.55; }
+.group-avatar {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #fff;
+  background: hsl(var(--group-hue, 210), 60%, 55%);
+}
+.group-presence-info {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.group-presence-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.group-presence-status {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.group-presence-row.phase-idle .group-presence-status { color: var(--muted, #888); }
+.group-presence-row.phase-running .group-presence-status { color: var(--accent); }
+.group-presence-row.phase-thinking .group-presence-status { color: var(--info); }
+.group-presence-row.phase-typing .group-presence-status { color: var(--success); }
+.group-presence-row.phase-tool .group-presence-status { color: var(--warning); }
+.group-room-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.group-drawer-toggle { display: none; }
+.group-empty-drawer { display: none; }
+.group-sidebar-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+@media (max-width: 1000px) {
+  .group-layout { gap: 8px; padding: 8px; }
+  .group-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    max-width: 85vw;
+    z-index: 50;
+    padding: 12px;
+    background: var(--surface, #1b1b1b);
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.35);
+    transform: translateX(-102%);
+    transition: transform 0.18s ease;
+  }
+  .group-sidebar.open { transform: none; }
+  .group-drawer-toggle { display: inline-flex; }
+  .group-presence {
+    width: 176px;
+    flex-basis: 176px;
+  }
+  .group-empty-drawer { display: inline-block; }
+}
+
+@media (max-width: 720px) {
+  .group-layout { flex-direction: column; padding: 8px; gap: 8px; }
+  .group-main { min-height: 0; }
+  .group-room { gap: 6px; }
+  .group-room-head { flex-wrap: wrap; gap: 6px; }
+  .group-room-head strong { font-size: 15px; }
+  #group-room-status { flex: 1 1 100%; order: 4; font-size: 12px; }
+  .group-room-actions { margin-left: auto; }
+  .group-room-body { flex-direction: column; gap: 6px; }
+  .group-presence {
+    width: auto;
+    flex: 0 0 56px;
+    height: 56px;
+    min-height: 56px;
+    padding: 4px 6px;
+    display: flex;
+    align-items: center;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+  .group-presence-title { display: none; }
+  .group-presence-list {
+    flex-direction: row;
+    gap: 6px;
+    min-width: max-content;
+  }
+  .group-presence-row {
+    min-width: 104px;
+    height: 44px;
+    padding: 2px 4px;
+  }
+  .group-presence-name { font-size: 12px; }
+  .group-presence-status { font-size: 11px; }
+  .group-timeline { flex: 1; min-height: 0; min-width: 0; }
+  .group-input-row { padding-bottom: max(0px, env(safe-area-inset-bottom)); }
+}
+
+.group-empty { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.group-empty-drawer { padding: 6px 10px; }

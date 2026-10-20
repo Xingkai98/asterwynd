@@ -8,14 +8,14 @@
 
 ## Confirmed Decisions
 
-- **决策**: 工具的开始/结束必须取 `before_tool_execute` / `after_tool_execute`，不能取 `tool_call` / `tool_result`；`on_error` 不能当 run 终态；`typing` 只在流式开启时可观测。**理由**: `tool_call`/`tool_result` 在 Phase 3 后处理才发（`agent/loop.py:1013-1014`、`:1075-1089`），工具真正开始/结束的钩子在 `agent/loop.py:1417`、`:1447`；`on_error` 在参数解析错误（`:877`）和 Bash 异常/超时（`:1427`、`:1431`）都会触发；非流式时 `_should_stream_llm()` 为假（`:1389-1395`），`BaseLLM.stream` 默认 False（`agent/llm.py:98`），`ASTERWYND_STREAMING` 缺省 enabled（`agent/main.py:132-134`）。**来源**: grill-agent-paseo
-- **决策**: 用 `SessionRunner.run(..., on_progress=...)` 回调而不是在 web 层合成 `ConnectionHandle`。**理由**: 群聊 runner 确实无连接驱动——`WebSessionRunner.run` 调 `manager.run_session(session, message)` 不传 handle（`web/session.py:2203-2206`），`SessionEventChannel.broadcast` 没有句柄时直接返回 0（`:420-437`），drain 循环把所有事件交给它（`:2125`）；回调把「成员进度」与「连接事件」分开，且 `agent/team` 不反向 import web 的分层约束成立（`agent/team/orchestrator.py:269`、`agent/team/runner.py:1-16`）。**来源**: grill-agent-paseo
-- **决策**: 状态 reducer 放 `agent/team/` 编排器层、只消费无内容信号，是可测试且分层正确的选择。**理由**: reducer 只依赖 `(kind, data)`；`agent/team` 已有 `SessionRunner`/`SessionResolver` 的依赖倒置先例；纯函数可在无 provider、无 asyncio 的条件下覆盖优先级、并发工具计数与终态重置。**来源**: grill-agent-paseo
-- **决策**: 服务端权威、只发状态迁移、不把 token 级 `assistant_delta`/`reasoning_delta` 转发到房间总线。**理由**: `RoomEventBus.broadcast` 对每个订阅者逐条 `await`（`web/team.py:112-121`），token 增量在多标签页下会线性放大并拖慢广播；业界矩阵/typing 与 presence 的租约模型也不要求转发内容（RIR 的 Matrix/Discord 引用成立）。**来源**: grill-agent-paseo
-- **决策**: 用 `room_state` 快照恢复重连/第二标签页，并修正「先 subscribe 再发快照」的窗口。**理由**: 现状确实先 `room_bus.subscribe(room_id, ws.send_json)`（`web/server.py:651`）再 `await ws.send_json(room_state)`（`:652-661`），订阅后到快照前有并发发送窗口；快照字段只有 `workspace`/`room`/`members`/`timeline`/`round_active`，轮次中重连看不到谁在忙。**来源**: grill-agent-paseo
-- **决策**: 桌面用独立 presence 列取代现有成员 chip 行，避免同一成员两处状态。**理由**: chip 行现在只承载成员身份/`speaking` 全局高亮（`web/static/group.js:306-324`、`index.html:188`），而 `state.speaking` 是单值（`group.js:19-20`），无法表达 per-member 五档；新模型必须替换它。**来源**: grill-agent-paseo
-- **决策**: 移动端必须先修现有群聊布局（管理侧栏抽屉化），再谈状态形态；方案 A/B/C 的推荐 A 方向成立。**理由**: 群聊 CSS 位于最后一条 `@media (max-width: 720px)` 之后（`web/static/style.css:2064-2094` vs `:2096` 起），没有群聊移动端规则；`.group-sidebar` 固定 260px（`:2104-2112`），390px 下主区约 94px，抽屉化是必要前提；A 的 56px 横向成员条在 366px 主区下可显示约 3 人，取舍描述属实。**来源**: grill-agent-paseo
-- **决策**: 取消/断线用既有 `round_ended` 承载 teardown 通知，而不是新增取消协议或用户打断出口。**理由**: 旧前端对 `round_ended` 已有「本轮结束」分支（`group.js:276-288`），新 termination 值对旧前端可降级；房间 WS 只处理 `chat`/`ping`（`web/server.py:678-690`），规格明确首版不提供轮次取消出口（`openspec/specs/multi-agent-collaboration/spec.md:1304`）；`round_ended(cancelled)` 不写日志、不产生 `RoundResult` 的隔离口径正确。**来源**: grill-agent-paseo
+- **决策**: 工具的开始/结束必须取 `before_tool_execute` / `after_tool_execute`，不能取 `tool_call` / `tool_result`；`on_error` 不能当 run 终态；`typing` 只在流式开启时可观测。**理由**: `tool_call`/`tool_result` 在 Phase 3 后处理才发（`agent/loop.py:1013-1014`、`:1075-1089`），工具真正开始/结束的钩子在 `agent/loop.py:1417`、`:1447`；`on_error` 在参数解析错误（`:877`）和 Bash 异常/超时（`:1427`、`:1431`）都会触发；非流式时 `_should_stream_llm()` 为假（`:1389-1395`），`BaseLLM.stream` 默认 False（`agent/llm.py:98`），`ASTERWYND_STREAMING` 缺省 enabled（`agent/main.py:132-134`）。来源: grill-agent-paseo
+- **决策**: 用 `SessionRunner.run(..., on_progress=...)` 回调而不是在 web 层合成 `ConnectionHandle`。**理由**: 群聊 runner 确实无连接驱动——`WebSessionRunner.run` 调 `manager.run_session(session, message)` 不传 handle（`web/session.py:2203-2206`），`SessionEventChannel.broadcast` 没有句柄时直接返回 0（`:420-437`），drain 循环把所有事件交给它（`:2125`）；回调把「成员进度」与「连接事件」分开，且 `agent/team` 不反向 import web 的分层约束成立（`agent/team/orchestrator.py:269`、`agent/team/runner.py:1-16`）。来源: grill-agent-paseo
+- **决策**: 状态 reducer 放 `agent/team/` 编排器层、只消费无内容信号，是可测试且分层正确的选择。**理由**: reducer 只依赖 `(kind, data)`；`agent/team` 已有 `SessionRunner`/`SessionResolver` 的依赖倒置先例；纯函数可在无 provider、无 asyncio 的条件下覆盖优先级、并发工具计数与终态重置。来源: grill-agent-paseo
+- **决策**: 服务端权威、只发状态迁移、不把 token 级 `assistant_delta`/`reasoning_delta` 转发到房间总线。**理由**: `RoomEventBus.broadcast` 对每个订阅者逐条 `await`（`web/team.py:112-121`），token 增量在多标签页下会线性放大并拖慢广播；业界矩阵/typing 与 presence 的租约模型也不要求转发内容（RIR 的 Matrix/Discord 引用成立）。来源: grill-agent-paseo
+- **决策**: 用 `room_state` 快照恢复重连/第二标签页，并修正「先 subscribe 再发快照」的窗口。**理由**: 现状确实先 `room_bus.subscribe(room_id, ws.send_json)`（`web/server.py:651`）再 `await ws.send_json(room_state)`（`:652-661`），订阅后到快照前有并发发送窗口；快照字段只有 `workspace`/`room`/`members`/`timeline`/`round_active`，轮次中重连看不到谁在忙。来源: grill-agent-paseo
+- **决策**: 桌面用独立 presence 列取代现有成员 chip 行，避免同一成员两处状态。**理由**: chip 行现在只承载成员身份/`speaking` 全局高亮（`web/static/group.js:306-324`、`index.html:188`），而 `state.speaking` 是单值（`group.js:19-20`），无法表达 per-member 五档；新模型必须替换它。来源: grill-agent-paseo
+- **决策**: 移动端必须先修现有群聊布局（管理侧栏抽屉化），再谈状态形态；方案 A/B/C 的推荐 A 方向成立。**理由**: 群聊 CSS 位于最后一条 `@media (max-width: 720px)` 之后（`web/static/style.css:2064-2094` vs `:2096` 起），没有群聊移动端规则；`.group-sidebar` 固定 260px（`:2104-2112`），390px 下主区约 94px，抽屉化是必要前提；A 的 56px 横向成员条在 366px 主区下可显示约 3 人，取舍描述属实。来源: grill-agent-paseo
+- **决策**: 取消/断线用既有 `round_ended` 承载 teardown 通知，而不是新增取消协议或用户打断出口。**理由**: 旧前端对 `round_ended` 已有「本轮结束」分支（`group.js:276-288`），新 termination 值对旧前端可降级；房间 WS 只处理 `chat`/`ping`（`web/server.py:678-690`），规格明确首版不提供轮次取消出口（`openspec/specs/multi-agent-collaboration/spec.md:1304`）；`round_ended(cancelled)` 不写日志、不产生 `RoundResult` 的隔离口径正确。来源: grill-agent-paseo
 
 ## Design Corrections
 
@@ -92,4 +92,14 @@
 
 ## User Confirmation
 
-- 待用户答复（本 change 处于停轮前；Open Questions 尚未确认）。
+- **Q1**: 用户答复：移动端采用顶部 56px 横向成员条，每项 104px，390px 下约 3 人可见、可横向滑动看全，时间线相应让出 56px；确认时间: 2026-10-20
+- **Q2**: 用户答复：超时/失败后立即回到空闲，错误只在时间线显示，不新增「上次失败」展示态；确认时间: 2026-10-20
+- **Q3**: 用户答复：接受每人独立一行、但串行执行；真正的并发不在本 change，另立 change 并修改规格；确认时间: 2026-10-20
+
+## Evidence Check (2026-10-20)
+
+- 调用：`witnessloop.evidence.grill_evidence_findings(text=grill-design.md, report_path=...)`
+  （`PYTHONPATH=/home/happy/witnessloop/src`）。
+- 结果：**0 findings**（不再有「Open Question 未经用户确认」或「缺 来源」类 finding）。
+- 要点：8 条 Confirmed Decisions 均含裸 `来源:`；Q1/Q2/Q3 均有实质 `用户答复：` 与
+  `确认时间: 2026-10-20`，且答复不是占位文本。

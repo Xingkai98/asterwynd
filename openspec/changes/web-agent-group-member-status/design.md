@@ -58,7 +58,7 @@
 
 **Non-Goals**
 
-- 不做多成员真正并发（见 Open Question Q3；当前编排器串行
+- 不做多成员真正并发（Q3 已确认 = A；当前编排器串行
   `agent/team/orchestrator.py:393-399`，规格 `openspec/specs/multi-agent-collaboration/spec.md:1267`）。
   本 change 的 per-member 模型为未来并发留出接口，但实现仍串行。
 - 不做用户打断/轮次取消协议（`web/server.py:678-690`、`spec.md:1304`）。
@@ -522,7 +522,7 @@ finally:
   （现状 `web/static/index.html:223` 是 `group.js?v=2`）；浏览器 smoke 断言
   `window.AsterwyndGroupStatus` 存在。
 
-## Decision 8：移动端形态（Open Question Q1）
+## Decision 8：移动端形态（Q1 已确认 = A）
 
 前置（三个方案共同）：≤720px 时管理侧栏变成 off-canvas 抽屉（房间头部/视图顶部一个
 `群聊 / 人设` 按钮，遮罩关闭）；主区占满宽度（390px 下约 366px）。presence 在
@@ -564,8 +564,9 @@ finally:
 - 优点：最省空间；只呈现「正在发生的事」。
 - 缺点：默认不满足「每个成员一行」；空闲成员不可见；需要第二次交互才能看全。
 
-**推荐 A**：本 change 的核心价值是「每个成员实时可见」，A 以最小交互成本满足它；56px 在
-390×844 的视口里可接受，且与桌面 presence 共享同一套渲染/排序逻辑。
+**用户已确认 A**：本 change 的核心价值是「每个成员实时可见」，A 以最小交互成本满足它；
+56px 在 390×844 的视口里可接受，且与桌面 presence 共享同一套渲染/排序逻辑。实现与浏览器
+smoke 必须按 A 落地：横向条可见约 3 人、可滑动、时间线让出 56px。
 
 ## Decision 9：旧服务端降级、断线与可访问性
 
@@ -812,7 +813,9 @@ describeChange(prev, next)             // aria-live 单条文案或 null
 
 ## Open Questions
 
-> 每条都附本 change 的真实场景与推荐答案。停轮时由主 session 转达，收到答复前不写实现代码。
+> 以下三条已于 2026-10-20 停轮由用户确认，**全部选 A**；生效口径见下一节
+> `## User Rulings (2026-10-20)`，逐条答复记录在 `reviews/grill-design.md` 的
+> `## User Confirmation`。本节保留原始问题与选项以存证。
 
 ### Q1（必答）：移动端成员状态的呈现形态
 
@@ -855,6 +858,15 @@ describeChange(prev, next)             // aria-live 单条文案或 null
 - **A（推荐）接受「每人独立一行、串行执行」**：本 change 只做状态可观测性与展示；真正的
   并行是编排语义变更，另立 change 并修改规格 1267。
 - **B 在本 change 内改编排为并行**：违反现有规格、放大成本与失败面，不建议。
+
+## User Rulings (2026-10-20)
+
+- **Q1 = A（移动端形态）**：采用顶部 **56px 横向成员条**，每项 104px；390px 下约 3 人可见、
+  可横向滑动看全；时间线相应让出 56px。这是实现与浏览器 smoke 的生效口径。
+- **Q2 = A（失败标记）**：超时/失败后**立即回空闲**，错误只在时间线显示；不新增「上次失败」
+  展示态。`member_failed` 回 idle 并用 `name` 修正时间线文案。
+- **Q3 = A（多成员并发的解释）**：接受「每人独立一行、但**串行执行**」；真正的并发不在本
+  change，另立 change 并修改规格 1267。本 change 的实现 SHALL NOT 引入并行成员执行。
 
 ## Code-Resolved Questions
 
@@ -922,8 +934,8 @@ describeChange(prev, next)             // aria-live 单条文案或 null
 - 设计对抗 R6：`reviews/grill-adversarial-r6.md`，verdict **PASS**（无 high/medium；T1/L1–L8
   已修复或合理处置，X1/N1–N6/F1–F13 未被破坏）。R6 后的 L-a–L-g 测试/文档口径已顺手收敛。
   收口报告已落为 `reviews/grill-adversarial.md`（逐轮证据保留在 `-r1..r6.md`）。
-- **出口 = PASS**。该 PASS 只表示设计对抗环收口，不构成写码许可；Q1/Q2/Q3 仍需停轮确认。
+- **出口 = PASS**。**停轮确认已完成（2026-10-20，Q1/Q2/Q3 全部 = A）**：移动端 56px 横向条、
+  失败后立即回空闲、接受串行执行；生效口径见 `## User Rulings (2026-10-20)` 与
+  `reviews/grill-design.md` 的 `## User Confirmation`。设计环放行，可进入实现（TDD）。
 - 轮数口径：按用户 2026-10-20 的明确指示「跑到收敛（无轮数上限）」；仓库 `AGENTS.md` 仍写
   20 个已收口轮，本 change 不单方面改仓库规则；若达到 20 轮仍未收敛，登记差异并上报用户。
-- 停轮 Open Questions：Q1（移动端形态）、Q2（失败标记）、Q3（多成员并发的解释）；
-  收到用户答复前不写实现/测试代码。
