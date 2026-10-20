@@ -902,36 +902,36 @@ describeChange(prev, next)             // aria-live 单条文案或 null
 
 - grill 证据：`reviews/grill-design.md`（8 条 Confirmed Decisions；27 条 Design Corrections，
   已逐条落实到本设计）。
-- 设计对抗 R1：`reviews/grill-adversarial-r1.md`，verdict `CHANGES_REQUESTED`（无 high，
+- 设计对抗 R1：`rounds/grill-adversarial-r1.md`，verdict `CHANGES_REQUESTED`（无 high，
   2 medium + 11 low/nit）。已修复：F1 删除 `member_speaking` 头部文案、明确头部单一归属；
   F2 增加握手顺序与跨轮迟到终态的确定性测试（含变异验证）；F3 建会话失败走统一
   `_finish_member`；F4 重置幂等（表未变不递增/不发射）；F5 正常 `round_ended` 前 flush；
   F6 自动滚入只动横向 `scrollLeft`；F7 benchmark smoke 触发口径；F8 轮数口径登记；
   F9 评审记录路径；F10 idle 条目措辞；F11 390px 头部收纳与无溢出断言；F12 移动端空状态入口；
   F13 事件驱动清单补降级路径。
-- 设计对抗 R2：`reviews/grill-adversarial-r2.md`，verdict `CHANGES_REQUESTED`（无 high，
+- 设计对抗 R2：`rounds/grill-adversarial-r2.md`，verdict `CHANGES_REQUESTED`（无 high，
   2 medium + 4 low）。已修复：N1 把 pop 提到 flush 之前并补「收尾窗口不吞新消息」回归
   （tasks 2.7 / 1.2.2）；N2 spec 三处「无条件递增」改为「表实际变化才递增」；N3 迟到
   `round_ended(limit)` 仍重拉时间线；N4 测试文案改为「事件流中曾出现」；N5 固定
   `group_status.js` 的 `{state, changed, applied}` 返回契约；N6 清理 R1 记录中的本地路径。
-- 设计对抗 R3：`reviews/grill-adversarial-r3.md`，verdict `CHANGES_REQUESTED`（1 high + 4 low）。
+- 设计对抗 R3：`rounds/grill-adversarial-r3.md`，verdict `CHANGES_REQUESTED`（1 high + 4 low）。
   已修复：X1 所有认领释放点改为 `is state` 身份判断，补「R1 返回后 R2 仍 active、M3 queued
   进 R2」回归；limit system 条目提前到 reset/pop 之前；N1 gate 改为一次性有界等待；N3 补
   迟到 limit 终态仍重拉时间线的测试；N5 统一 `apply*` 返回 `{state, changed, applied}`；
   N2 终态 no-op 时携带当前 seq 的措辞。
-- 设计对抗 R4：`reviews/grill-adversarial-r4.md`，verdict `CHANGES_REQUESTED`（无 high，
+- 设计对抗 R4：`rounds/grill-adversarial-r4.md`，verdict `CHANGES_REQUESTED`（无 high，
   2 medium + 1 low）。已修复：M1 WS 层中间态测试改为「最终表/工具态 + 编排器层中间态」，
   慢速脚本 LLM 必须有让出点，风险写入 Risks；M2 新一轮 `user_message`/首个非空闲状态清除
   上一轮结束提示，连接/错误提示优先；low 补齐「认领已释放则不复位、不发旧终态」的 tasks
   口径。
-- 设计对抗 R5：`reviews/grill-adversarial-r5.md`，verdict `CHANGES_REQUESTED`（无 high，
+- 设计对抗 R5：`rounds/grill-adversarial-r5.md`，verdict `CHANGES_REQUESTED`（无 high，
   1 medium + 5 low + 3 nit）。已修复：T1 增加真实 `WebSessionRunner` + `ScriptedLLM` +
   `on_progress` collector 的 web 层映射测试与变异验证；L1 `MemberStatus` 不含成员级 seq；
   L2 意外异常 teardown 加认领身份限定并登记 released-claim 实时可见性；L3 limit 重拉测试
   移到 group.js/浏览器层；L4「最终表」措辞改为「事件流中曾出现 + 回合结束快照一致」；
   L5 `op` 提示在下次成功发送/连接成功后清除；L6 presence 重绘保留横向滚动；L7 反定时器
   等待 3s；L8 backlog 引用不再悬空。
-- 设计对抗 R6：`reviews/grill-adversarial-r6.md`，verdict **PASS**（无 high/medium；T1/L1–L8
+- 设计对抗 R6：`rounds/grill-adversarial-r6.md`，verdict **PASS**（无 high/medium；T1/L1–L8
   已修复或合理处置，X1/N1–N6/F1–F13 未被破坏）。R6 后的 L-a–L-g 测试/文档口径已顺手收敛。
   收口报告已落为 `reviews/grill-adversarial.md`（逐轮证据保留在 `-r1..r6.md`）。
 - **出口 = PASS**。**停轮确认已完成（2026-10-20，Q1/Q2/Q3 全部 = A）**：移动端 56px 横向条、

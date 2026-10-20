@@ -50,7 +50,7 @@
 ## 修复面与历史项复核
 
 `git diff --stat 1180cf1..381bbc8` 仅两项：`tests/web_tests/test_group_status_browser.py`
-（+17/-1）与 `reviews/building-review-r3.md`（新增）；`web/`、`agent/`、`scripts/` 零改动
+（+17/-1）与 `rounds/building-review-r3.md`（新增）；`web/`、`agent/`、`scripts/` 零改动
 （`git diff --name-only ... -- web/ agent/ scripts/` 为空）。因此后端与前端实现不变量
 结构上未被本轮触碰，定向套件全绿可视为未破坏的实证。
 

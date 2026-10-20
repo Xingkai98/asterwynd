@@ -6,19 +6,19 @@
 - **时间**: 2026-10-20
 - **零记忆**: 是（独立 paseo agent；只读 change 文档、issue #307、代码与既有规格）
 - **性质**: 设计阶段对抗闭环（与实现后 `/review-loop` 同构，审设计不审代码）的最终收口报告。
-  逐轮完整证据见同目录的 `grill-adversarial-r1.md` … `grill-adversarial-r6.md`；本文件只记录
+  逐轮完整证据见同目录的 `rounds/grill-adversarial-r1.md` … `rounds/grill-adversarial-r6.md`；本文件只记录
   轮次、最终判定与残留登记。
 
 ## 轮次与收口
 
 | 轮 | 报告 | verdict | 本轮主要产出 |
 |---|---|---|---|
-| R1 | `grill-adversarial-r1.md` | CHANGES_REQUESTED | 2 medium（F1 头部发言文案生命周期、F2 两条核心顺序不变量缺确定性测试）+ 11 low/nit；C1–C27 核对 |
-| R2 | `grill-adversarial-r2.md` | CHANGES_REQUESTED | 2 medium（N1 收尾 flush/pop 顺序、N2 spec 无条件递增）+ 4 low；F1–F13 复核 |
-| R3 | `grill-adversarial-r3.md` | CHANGES_REQUESTED | 1 high（X1 旧轮 finally 误删新一轮认领）+ 4 low |
-| R4 | `grill-adversarial-r4.md` | CHANGES_REQUESTED | 2 medium（M1 WS 中间态测试可执行性、M2 「本轮结束」未在新轮清除）+ 1 low |
-| R5 | `grill-adversarial-r5.md` | CHANGES_REQUESTED | 1 medium（T1 web 层事件→进度信号映射无确定性测试）+ 5 low + 3 nit |
-| R6 | `grill-adversarial-r6.md` | **PASS** | T1/L1–L8 全部修复或合理处置；X1/N1–N6/F1–F13 关键项未被破坏；无新 high/medium |
+| R1 | `rounds/grill-adversarial-r1.md` | CHANGES_REQUESTED | 2 medium（F1 头部发言文案生命周期、F2 两条核心顺序不变量缺确定性测试）+ 11 low/nit；C1–C27 核对 |
+| R2 | `rounds/grill-adversarial-r2.md` | CHANGES_REQUESTED | 2 medium（N1 收尾 flush/pop 顺序、N2 spec 无条件递增）+ 4 low；F1–F13 复核 |
+| R3 | `rounds/grill-adversarial-r3.md` | CHANGES_REQUESTED | 1 high（X1 旧轮 finally 误删新一轮认领）+ 4 low |
+| R4 | `rounds/grill-adversarial-r4.md` | CHANGES_REQUESTED | 2 medium（M1 WS 中间态测试可执行性、M2 「本轮结束」未在新轮清除）+ 1 low |
+| R5 | `rounds/grill-adversarial-r5.md` | CHANGES_REQUESTED | 1 medium（T1 web 层事件→进度信号映射无确定性测试）+ 5 low + 3 nit |
+| R6 | `rounds/grill-adversarial-r6.md` | **PASS** | T1/L1–L8 全部修复或合理处置；X1/N1–N6/F1–F13 关键项未被破坏；无新 high/medium |
 
 ## 最终验证（R6）
 
