@@ -201,9 +201,10 @@
 
 ## 7. 实现后独立审阅闭环
 
-- [ ] 7.1 独立零记忆审阅，产出 `reviews/building-review.md`（含 `## 闭环出口`），按批次模型
-  收敛到 PASS（medium+ 全修，low/nit 登记并写理由）。
-- [ ] 7.2 全部 medium+ 修复并补回归测试；low/nit 复核处置记录。
+- [x] 7.1 独立零记忆审阅，产出 `reviews/building-review.md`（含 `## 闭环出口`），按批次模型
+  收敛到 PASS（R1→R4；R4 最终 PASS，见 `reviews/building-review-r1..r4.md`）。
+- [x] 7.2 全部 medium+ 修复并补回归测试；low/nit 复核处置记录（R1 3 medium / R2 2 medium
+  与 L1–L5 / R3 1 项 false-green 均已修复；R4 无新 high/medium）。
 
 ## 8. 收尾（合入后）
 
