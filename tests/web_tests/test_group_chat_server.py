@@ -5,17 +5,19 @@
 `DELETE /api/sessions` 拒删内部会话、WS `reset` 拒改内部会话、
 房间级 WS 的 `room_state` + 回合事件流 + `@` 点名。
 """
+import asyncio
 import json
+import time
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from agent.config import AsterwyndConfig
-from agent.llm import LLMResponse
+from agent.llm import LLMResponse, ToolCallDelta
 from agent.session import SessionSnapshot, SessionStore
 from tests.support.llm_harness import ScriptedLLM
-from web.server import create_app
+from web.server import _room_handshake, create_app
 
 
 @pytest.fixture
@@ -241,7 +243,9 @@ class TestRoomWebSocket:
 
             ws.send_json({"type": "chat", "content": "大家好"})
             seen = []
-            for _ in range(12):
+            # 收到 round_ended 即停；64 只是防挂死的安全上限（新增 member_status 后
+            # 一个回合的事件数会高于旧上限 12）。
+            for _ in range(64):
                 event = ws.receive_json()
                 seen.append(event["type"])
                 if event["type"] == "round_ended":
@@ -281,6 +285,187 @@ class TestRoomWebSocket:
     def test_unknown_room_closes_the_socket(self, client):
         with client.websocket_connect("/ws/room/r-nope") as ws:
             assert ws.receive_json() == {"error": "unknown_room"}
+
+
+class TestRoomStateStatusSnapshot:
+    def test_room_state_has_status_fields_after_a_round(self, client):
+        pid = _create_persona(client, "甲")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "admin": pid,
+        }).json()["room"]
+        client.post(f"/api/team/rooms/{room['id']}/messages", json={"content": "你好"})
+
+        with client.websocket_connect(f"/ws/room/{room['id']}") as ws:
+            state = ws.receive_json()
+            assert state["type"] == "room_state"
+            data = state["data"]
+            assert data["member_statuses"] == []
+            assert data["round_active"] is False
+            assert isinstance(data["status_seq"], int) and data["status_seq"] >= 1
+
+    def test_reconnect_during_busy_round_sees_member_status(self, tmp_path):
+        class SlowLLM(ScriptedLLM):
+            async def chat(self, messages, tools=None, model="gpt-4"):
+                await asyncio.sleep(2)
+                return LLMResponse(content="慢回答")
+
+        app = create_app(SlowLLM(), config=AsterwyndConfig(), workspace_root=tmp_path)
+        with TestClient(app) as client:
+            pid = _create_persona(client, "甲")["persona"]["id"]
+            room = client.post("/api/team/rooms", json={
+                "name": "r", "members": [pid], "admin": pid,
+            }).json()["room"]
+            with client.websocket_connect(f"/ws/room/{room['id']}") as ws1:
+                ws1.send_json({"type": "chat", "content": "你好"})
+                assert _next_event(ws1, {"member_speaking"})["type"] == "member_speaking"
+                time.sleep(0.2)      # 让 before_iteration 把状态推到 thinking
+                with client.websocket_connect(f"/ws/room/{room['id']}") as ws2:
+                    state = ws2.receive_json()
+                    assert state["type"] == "room_state"
+                    statuses = state["data"]["member_statuses"]
+                    assert state["data"]["round_active"] is True
+                    assert len(statuses) == 1
+                    assert statuses[0]["persona_id"] == pid
+                    assert statuses[0]["phase"] in ("running", "thinking")
+                    assert statuses[0]["tools"] == []
+                    assert state["data"]["status_seq"] >= 1
+
+
+class TestRoomHandshakeOrdering:
+    @pytest.mark.asyncio
+    async def test_snapshot_is_first_and_broadcast_waits_for_lock(self):
+        lock = asyncio.Lock()
+        sent: list[str] = []
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def send(payload):
+            async with lock:
+                sent.append(payload["type"])
+
+        async def send_raw(payload):
+            sent.append(payload["type"])
+            started.set()
+            await release.wait()
+
+        task = asyncio.create_task(_room_handshake(
+            lock,
+            build_payload=lambda: {"type": "room_state"},
+            subscribe=lambda: "tok",
+            send_raw=send_raw,
+            unsubscribe=lambda token: None,
+        ))
+        await started.wait()
+        broadcaster = asyncio.create_task(send({"type": "member_status"}))
+        await asyncio.sleep(0)
+        assert sent == ["room_state"], "广播必须等待首帧发送完成"
+        release.set()
+        assert await task == "tok"
+        await broadcaster
+        assert sent == ["room_state", "member_status"]
+
+    @pytest.mark.asyncio
+    async def test_handshake_failure_unsubscribes(self):
+        lock = asyncio.Lock()
+        removed: list[str] = []
+
+        async def send_raw(payload):
+            raise RuntimeError("gone")
+
+        with pytest.raises(RuntimeError):
+            await _room_handshake(
+                lock,
+                build_payload=lambda: {"type": "room_state"},
+                subscribe=lambda: "tok",
+                send_raw=send_raw,
+                unsubscribe=removed.append,
+            )
+        assert removed == ["tok"]
+
+
+class TestMemberStatusWebSocket:
+    def test_scripted_tool_round_emits_tool_status(self, tmp_path):
+        llm = ScriptedLLM([
+            LLMResponse(
+                content="先查一下",
+                tool_calls=[ToolCallDelta(
+                    id="c1", name="Bash", arguments='{"cmd": "echo hi"}',
+                )],
+                stop_reason="tool_calls",
+            ),
+            LLMResponse(content="完成", stop_reason="end_turn"),
+        ], stream=True)
+        app = create_app(llm, config=AsterwyndConfig(), workspace_root=tmp_path)
+        with TestClient(app) as client:
+            pid = _create_persona(client, "甲")["persona"]["id"]
+            room = client.post("/api/team/rooms", json={
+                "name": "r", "members": [pid], "admin": pid,
+            }).json()["room"]
+            with client.websocket_connect(f"/ws/room/{room['id']}") as ws:
+                ws.receive_json()                    # room_state
+                ws.send_json({"type": "chat", "content": "你好"})
+                events = []
+                for _ in range(64):
+                    event = ws.receive_json()
+                    events.append(event)
+                    if event["type"] == "round_ended":
+                        break
+                assert events[-1]["type"] == "round_ended"
+                statuses = [
+                    status
+                    for event in events if event["type"] == "member_status"
+                    for status in event["data"]["statuses"]
+                ]
+                assert any(
+                    status["phase"] == "tool" and status["tools"] == ["Bash"]
+                    for status in statuses
+                )
+                assert any(event["type"] == "member_post" for event in events)
+
+    def test_non_streaming_round_never_emits_typing(self, client):
+        pid = _create_persona(client, "甲")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "admin": pid,
+        }).json()["room"]
+        with client.websocket_connect(f"/ws/room/{room['id']}") as ws:
+            ws.receive_json()
+            ws.send_json({"type": "chat", "content": "你好"})
+            events = []
+            for _ in range(64):
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "round_ended":
+                    break
+            statuses = [
+                status
+                for event in events if event["type"] == "member_status"
+                for status in event["data"]["statuses"]
+            ]
+            assert statuses, "至少应有 running/thinking 状态"
+            assert all(status["phase"] != "typing" for status in statuses)
+
+    def test_disconnect_cancels_round_and_notifies_other_tab(self, tmp_path):
+        class SlowLLM(ScriptedLLM):
+            async def chat(self, messages, tools=None, model="gpt-4"):
+                await asyncio.sleep(2)
+                return LLMResponse(content="慢回答")
+
+        app = create_app(SlowLLM(), config=AsterwyndConfig(), workspace_root=tmp_path)
+        with TestClient(app) as client:
+            pid = _create_persona(client, "甲")["persona"]["id"]
+            room = client.post("/api/team/rooms", json={
+                "name": "r", "members": [pid], "admin": pid,
+            }).json()["room"]
+            with client.websocket_connect(f"/ws/room/{room['id']}") as watcher:
+                watcher.receive_json()
+                with client.websocket_connect(f"/ws/room/{room['id']}") as sender:
+                    sender.receive_json()
+                    sender.send_json({"type": "chat", "content": "你好"})
+                    assert _next_event(sender, {"member_speaking"})["type"] == "member_speaking"
+                # sender 断开 → 轮次被取消；另一标签页应收到 status-only teardown。
+                ended = _next_event(watcher, {"round_ended"}, limit=64)
+                assert ended["data"]["termination"] == "cancelled"
+                assert isinstance(ended["data"]["status_seq"], int)
 
 
 class TestGoldenPath:

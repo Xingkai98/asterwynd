@@ -157,10 +157,10 @@
       <div class="drawer-body" id="drawer-body"></div>
     </aside>
 
-    <!-- Debug View -->
+    <!-- Group View -->
     <section id="group-view" class="view">
       <div class="group-layout">
-        <aside class="group-sidebar">
+        <aside class="group-sidebar" id="group-sidebar">
           <div class="group-block">
             <div class="group-block-head">
               <span>人设（roster）</span>
@@ -177,16 +177,30 @@
           </div>
         </aside>
         <main class="group-main">
-          <div id="group-empty" class="group-empty">从左侧选择或新建一个群聊</div>
+          <div id="group-empty" class="group-empty">
+            <span>从左侧选择或新建一个群聊</span>
+            <button type="button" id="group-empty-drawer" class="group-empty-drawer">打开群聊 / 人设</button>
+          </div>
           <div id="group-room" class="group-room" hidden>
             <header class="group-room-head">
+              <button type="button" id="group-drawer-toggle" class="group-drawer-toggle"
+                      aria-label="打开群聊/人设列表">群聊</button>
               <strong id="group-room-name"></strong>
               <span id="group-room-status"></span>
-              <button type="button" id="group-room-edit">设置</button>
-              <button type="button" id="group-room-delete">删除</button>
+              <div class="group-room-actions">
+                <button type="button" id="group-room-edit">设置</button>
+                <button type="button" id="group-room-delete">删除</button>
+              </div>
             </header>
-            <div id="group-room-members" class="group-members"></div>
-            <div id="group-room-timeline" class="group-timeline"></div>
+            <div id="group-room-notice" class="group-notice" hidden></div>
+            <div class="group-room-body">
+              <aside id="group-room-presence" class="group-presence" aria-label="成员状态">
+                <div class="group-presence-title">成员</div>
+                <ul id="group-presence-list" class="group-presence-list"></ul>
+              </aside>
+              <div id="group-room-timeline" class="group-timeline"></div>
+            </div>
+            <div id="group-presence-live" class="sr-only" aria-live="polite"></div>
             <div class="group-input-row">
               <textarea id="group-room-input" rows="2" placeholder="输入群消息，行首 @名字 可点名..."></textarea>
               <button type="button" id="group-room-send">发送</button>
@@ -194,6 +208,7 @@
           </div>
         </main>
       </div>
+      <div id="group-sidebar-scrim" class="group-sidebar-scrim" hidden></div>
       <div id="group-dialog-scrim" class="group-scrim" hidden></div>
       <div id="group-dialog" class="group-dialog" hidden role="dialog" aria-modal="true"></div>
     </section>
@@ -220,7 +235,8 @@
 <script src="/static/workflow_transcript.js?v=5"></script>
 <script src="/static/workflow.js?v=3"></script>
 <script src="/static/chat.js?v=27"></script>
-<script src="/static/group.js?v=2"></script>
+<script src="/static/group_status.js?v=1"></script>
+<script src="/static/group.js?v=3"></script>
 <script src="/static/debug.js?v=6"></script>
 </body>
 </html>

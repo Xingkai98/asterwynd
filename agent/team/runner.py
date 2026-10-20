@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Awaitable, Callable, Protocol, runtime_checkable
 
 #: 单轮缺省超时（秒）。参照实现 ``ds-bot/src/host/constants.js:25``
 #: ``ROOM_REPLY_TIMEOUT_MS = 240_000``。
@@ -60,6 +60,10 @@ class TurnOutcome:
         return self.status == STATUS_TEXT
 
 
+#: 成员进度回调：``(signal, data)``；只传状态信号，不传 token 文本。
+ProgressCallback = Callable[[str, dict], Awaitable[None]]
+
+
 @runtime_checkable
 class SessionRunner(Protocol):
     """「驱动一个会话的一轮并拿回出口」的抽象。由 web 层实现并注入。"""
@@ -71,6 +75,7 @@ class SessionRunner(Protocol):
         *,
         timeout: float | None = None,
         silent_marker: str | None = None,
+        on_progress: ProgressCallback | None = None,
     ) -> TurnOutcome:
         ...
 

@@ -12,7 +12,7 @@ import pytest
 
 from agent.config import AsterwyndConfig, TeamConfig
 from agent.run_config import AgentMode
-from agent.llm import LLMResponse
+from agent.llm import LLMResponse, ToolCallDelta
 from agent.session import (
     KIND_PERSONA_CHAT,
     KIND_ROOM_MEMBER,
@@ -834,3 +834,118 @@ class TestAdoptInternalSession:
     async def test_adopt_returns_false_for_unknown(self, tmp_path):
         service = _service(tmp_path)
         assert await service.adopt_internal_session("persona-nope") is False
+
+
+class TestProgressMapping:
+    """对抗 T1：真实 AgentLoop 事件/钩子 -> ProgressObserver -> on_progress 信号。
+
+    FakeRunner 直接调 ``on_progress`` 会绕过 web 层映射；本层必须用真实
+    ``WebSessionRunner`` + 真实 ``AgentSession`` + 流式 ``ScriptedLLM`` + 一次工具
+    调用，才能钉住「正在思考 / 正在输入 / 工具 id/name」的接线。
+    """
+
+    @pytest.mark.asyncio
+    async def test_real_runner_emits_progress_signals(self, tmp_path):
+        llm = ScriptedLLM([
+            LLMResponse(
+                content="先查一下",
+                tool_calls=[ToolCallDelta(
+                    id="c1", name="Bash", arguments='{"command": "echo hi"}',
+                )],
+                stop_reason="tool_calls",
+            ),
+            LLMResponse(content="完成", stop_reason="end_turn"),
+        ], stream=True)
+        service = _service(tmp_path, llm)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        sid = await service.ensure_persona_chat_session(ws, a.id)
+        runner = WebSessionRunner(service.manager)
+
+        signals: list[tuple[str, dict]] = []
+
+        async def collect(kind, data):
+            signals.append((kind, data))
+
+        outcome = await runner.run(sid, "hi", on_progress=collect)
+        assert outcome.status == "text"
+        assert outcome.text.strip() == "完成"
+
+        kinds = [kind for kind, _ in signals]
+        assert kinds.count("iteration_started") == 2
+        assert kinds.count("assistant_delta") == 2, "两次 LLM 调用各一个首个增量信号"
+        assert kinds.count("stream_complete") == 2
+        assert kinds.count("run_completed") == 1
+        assert "run_started" in kinds
+
+        starts = [data for kind, data in signals if kind == "tool_started"]
+        finishes = [data for kind, data in signals if kind == "tool_finished"]
+        assert len(starts) == 1 and len(finishes) == 1
+        assert starts[0] == {"tool_id": "c1", "tool_name": "Bash"}
+        assert finishes[0] == {"tool_id": "c1", "tool_name": "Bash"}
+
+    @pytest.mark.asyncio
+    async def test_progress_callback_exception_does_not_break_turn(self, tmp_path):
+        service = _service(tmp_path, ScriptedLLM(
+            default_response=LLMResponse(content="好的"), stream=True,
+        ))
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        sid = await service.ensure_persona_chat_session(ws, a.id)
+        runner = WebSessionRunner(service.manager)
+
+        async def boom(kind, data):
+            raise RuntimeError("progress failure")
+
+        outcome = await runner.run(sid, "hi", on_progress=boom)
+        assert outcome.status == "text"
+        assert outcome.text.strip() == "好的"
+
+    @pytest.mark.asyncio
+    async def test_observer_is_removed_between_runs(self, tmp_path):
+        llm = ScriptedLLM([
+            LLMResponse(content="第一次"),
+            LLMResponse(content="第二次"),
+        ], stream=True)
+        service = _service(tmp_path, llm)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        sid = await service.ensure_persona_chat_session(ws, a.id)
+        runner = WebSessionRunner(service.manager)
+
+        first: list[str] = []
+        second: list[str] = []
+
+        async def collect_first(kind, data):
+            first.append(kind)
+
+        async def collect_second(kind, data):
+            second.append(kind)
+
+        await runner.run(sid, "第一次", on_progress=collect_first)
+        await runner.run(sid, "第二次", on_progress=collect_second)
+        assert first.count("iteration_started") == 1
+        assert first.count("run_completed") == 1
+        assert second.count("iteration_started") == 1
+        assert second.count("run_completed") == 1
+        assert first.count("assistant_delta") == 1
+        assert second.count("assistant_delta") == 1
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_has_no_typing_signal(self, tmp_path):
+        llm = ScriptedLLM([LLMResponse(content="非流式")], stream=False)
+        service = _service(tmp_path, llm)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        sid = await service.ensure_persona_chat_session(ws, a.id)
+        runner = WebSessionRunner(service.manager)
+        kinds: list[str] = []
+
+        async def collect(kind, data):
+            kinds.append(kind)
+
+        outcome = await runner.run(sid, "hi", on_progress=collect)
+        assert outcome.status == "text"
+        assert "assistant_delta" not in kinds
+        assert "stream_complete" not in kinds
+        assert "iteration_started" in kinds

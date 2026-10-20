@@ -17,7 +17,14 @@
     ws: null,
     members: [],
     timeline: [],
-    speaking: null,
+    // 成员运行状态（change web-agent-group-member-status）：房间级完整表 + 单调 seq。
+    statuses: {},
+    statusSeq: 0,
+    statusStale: false,
+    connectionEpoch: 0,
+    statusText: '',
+    statusKind: '',
+    sidebarOpen: false,
     els: {},
   };
 
@@ -168,16 +175,43 @@
 
   // ---------------------------------------------------------------- 房间
 
+  const Status = window.AsterwyndGroupStatus;
+
+  function openSidebar() {
+    state.sidebarOpen = true;
+    const sidebar = el('group-sidebar');
+    if (sidebar) sidebar.classList.add('open');
+    const scrim = el('group-sidebar-scrim');
+    if (scrim) scrim.hidden = false;
+  }
+
+  function closeSidebar() {
+    state.sidebarOpen = false;
+    const sidebar = el('group-sidebar');
+    if (sidebar) sidebar.classList.remove('open');
+    const scrim = el('group-sidebar-scrim');
+    if (scrim) scrim.hidden = true;
+  }
+
+  function resetStatusState() {
+    state.statuses = {};
+    state.statusSeq = 0;
+    state.statusStale = false;
+  }
+
   function closeRoom() {
+    closeSidebar();
     if (state.ws) {
       state.ws.onclose = null;
       state.ws.close();
       state.ws = null;
     }
+    state.connectionEpoch += 1;
     state.activeRoom = null;
     state.members = [];
     state.timeline = [];
-    state.speaking = null;
+    resetStatusState();
+    setStatus('', '');
     const room = el('group-room');
     if (room) room.hidden = true;
     const empty = el('group-empty');
@@ -190,13 +224,14 @@
     try {
       stateBody = await api(withWorkspace(`/api/team/rooms/${roomId}/timeline`));
     } catch (err) {
-      setStatus(`打开群聊失败：${err.message}`);
+      setStatus(`打开群聊失败：${err.message}`, 'op');
       return;
     }
     state.activeRoom = stateBody.room;
     state.members = stateBody.members || [];
     state.timeline = stateBody.timeline || [];
-    state.speaking = null;
+    resetStatusState();
+    closeSidebar();
     el('group-room').hidden = false;
     el('group-empty').hidden = true;
     renderRoom();
@@ -210,13 +245,24 @@
       state.ws.close();
       state.ws = null;
     }
+    // 每次新建 socket 都推进代际：旧连接的尾部事件不得污染新连接的状态。
+    state.connectionEpoch += 1;
+    const epoch = state.connectionEpoch;
+    state.statusSeq = 0;
+    state.statusStale = true;
+    renderMemberPresence();
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = workspaceParam();
     const url = `${protocol}//${location.host}/ws/room/${roomId}${ws ? '?workspace=' + encodeURIComponent(ws) : ''}`;
     const socket = new WebSocket(url);
     state.ws = socket;
-    socket.onopen = () => setStatus('已连接');
+    socket.onopen = () => {
+      if (epoch !== state.connectionEpoch) return;
+      setStatus('已连接', 'conn');
+      clearOpStatus();
+    };
     socket.onmessage = (e) => {
+      if (epoch !== state.connectionEpoch) return;
       let event;
       try {
         event = JSON.parse(e.data);
@@ -226,66 +272,185 @@
       handleRoomEvent(event);
     };
     socket.onclose = () => {
+      if (epoch !== state.connectionEpoch) return;
       if (state.activeRoom && state.activeRoom.id === roomId) {
-        setStatus('连接断开，重连中...');
+        state.statusStale = true;
+        setStatus('连接断开，重连中...', 'conn');
+        renderMemberPresence();
         setTimeout(() => {
+          if (epoch !== state.connectionEpoch) return;
           if (state.activeRoom && state.activeRoom.id === roomId) connectRoom(roomId);
         }, 2000);
       }
     };
   }
 
+  function statusSnapshot() {
+    return { statuses: state.statuses, seq: state.statusSeq };
+  }
+
+  function memberName(personaId) {
+    const member = state.members.find(m => m.id === personaId);
+    return member ? member.name : personaId;
+  }
+
+  function memberNames() {
+    const names = {};
+    state.members.forEach(member => { names[member.id] = member.name; });
+    return names;
+  }
+
+  function hasNonIdle() {
+    return Object.values(state.statuses).some(status => status.phase !== 'idle');
+  }
+
+  function updateLiveRegion(prev) {
+    if (!Status) return;
+    const text = Status.describeChange(prev, statusSnapshot(), memberNames());
+    if (!text) return;
+    const live = el('group-presence-live');
+    if (live) live.textContent = text;
+  }
+
+  function appendTimeline(entry) {
+    if (entry.seq != null && state.timeline.some(item => item.seq === entry.seq)) {
+      return;
+    }
+    state.timeline.push(entry);
+  }
+
+  function clearRoundStatus() {
+    if (state.statusKind === 'round') setStatus('', '');
+  }
+
+  function clearOpStatus() {
+    if (state.statusKind === 'op') setStatus('', '');
+  }
+
   function handleRoomEvent(event) {
     const data = event.data || {};
+    const prev = statusSnapshot();
     switch (event.type) {
-      case 'room_state':
+      case 'room_state': {
         state.activeRoom = data.room || state.activeRoom;
         state.members = data.members || state.members;
         state.timeline = data.timeline || [];
-        state.speaking = null;
+        if (Status) {
+          const result = Status.applySnapshot(prev, data);
+          state.statuses = result.state.statuses;
+          state.statusSeq = result.state.seq;
+        } else {
+          resetStatusState();
+        }
+        state.statusStale = false;
         renderRoom();
         break;
+      }
       case 'user_message':
-        state.timeline.push({ seq: data.seq, speaker: 'user', kind: 'user', text: data.text, ts: '' });
-        renderRoom();
+        appendTimeline({
+          seq: data.seq, speaker: 'user', kind: 'user', text: data.text, ts: '',
+        });
+        if (!data.queued) clearRoundStatus();
+        renderTimeline();
         break;
-      case 'member_speaking':
-        state.speaking = data.persona_id;
-        setStatus(`${data.name || data.persona_id} 正在发言...`);
-        renderMembers();
+      case 'member_status': {
+        if (!Status) break;
+        const result = Status.applyStatusEvent(prev, data);
+        if (!result.applied) break;
+        state.statuses = result.state.statuses;
+        state.statusSeq = result.state.seq;
+        if (hasNonIdle()) clearRoundStatus();
+        updateLiveRegion(prev);
+        renderMemberPresence(true);
         break;
-      case 'member_post':
-        state.speaking = null;
-        state.timeline.push({
+      }
+      case 'member_speaking': {
+        // 旧服务端降级：没有 member_status 时用 speaking 表示 running。
+        if (!Status) break;
+        const result = Status.applySpeakingFallback(prev, data);
+        if (!result.changed) break;
+        state.statuses = result.state.statuses;
+        state.statusSeq = result.state.seq;
+        updateLiveRegion(prev);
+        renderMemberPresence(true);
+        break;
+      }
+      case 'member_post': {
+        if (Status) {
+          const result = Status.applyTerminal(prev, data);
+          state.statuses = result.state.statuses;
+          state.statusSeq = result.state.seq;
+        }
+        appendTimeline({
           seq: data.seq, speaker: data.speaker, kind: 'post', text: data.text, ts: '',
         });
-        renderRoom();
+        updateLiveRegion(prev);
+        renderTimeline();
+        renderMemberPresence();
         break;
-      case 'member_silent':
-        state.speaking = null;
-        renderMembers();
-        break;
-      case 'member_failed':
-        state.speaking = null;
-        state.timeline.push({
-          seq: null, speaker: null, kind: 'system',
-          text: `${data.persona_id} 运行失败：${data.reason || ''}`, ts: '',
-        });
-        renderRoom();
-        break;
-      case 'round_ended':
-        state.speaking = null;
-        setStatus(data.termination === 'limit' ? '本轮因达上限结束' : '本轮结束');
-        // 达上限那一轮会补一条 system 条目：重拉一次时间线保证与权威数据一致。
-        if (data.termination === 'limit') {
-          api(withWorkspace(`/api/team/rooms/${state.activeRoom.id}/timeline`))
-            .then(body => {
-              state.timeline = body.timeline || [];
-              renderRoom();
-            })
-            .catch(() => {});
+      }
+      case 'member_silent': {
+        if (Status) {
+          const result = Status.applyTerminal(prev, data);
+          state.statuses = result.state.statuses;
+          state.statusSeq = result.state.seq;
         }
+        updateLiveRegion(prev);
+        renderMemberPresence();
         break;
+      }
+      case 'member_failed': {
+        if (Status) {
+          const result = Status.applyTerminal(prev, data);
+          state.statuses = result.state.statuses;
+          state.statusSeq = result.state.seq;
+        }
+        appendTimeline({
+          seq: null, speaker: null, kind: 'system',
+          text: `${data.name || memberName(data.persona_id)} 运行失败：${data.reason || ''}`,
+          ts: '',
+        });
+        updateLiveRegion(prev);
+        renderTimeline();
+        renderMemberPresence();
+        break;
+      }
+      case 'round_ended': {
+        if (Status) {
+          const result = Status.applyTerminal(prev, data);
+          if (result.applied) {
+            state.statuses = result.state.statuses;
+            state.statusSeq = result.state.seq;
+            const text = data.termination === 'limit'
+              ? '本轮因达上限结束'
+              : data.termination === 'cancelled'
+                ? '本轮已中止'
+                : data.termination === 'error'
+                  ? '本轮异常结束'
+                  : '本轮结束';
+            setStatus(text, 'round');
+          }
+        }
+        // 迟到终态即使不改状态，limit 的 system 条目仍需重拉；响应应用前校验房间。
+        if (data.termination === 'limit') {
+          const roomId = state.activeRoom && state.activeRoom.id;
+          if (roomId) {
+            api(withWorkspace(`/api/team/rooms/${roomId}/timeline`))
+              .then(body => {
+                if (!state.activeRoom || state.activeRoom.id !== roomId) return;
+                // 按 seq 合并：重拉期间到达的新消息不能丢；同 seq 以服务端为准。
+                state.timeline = Status
+                  ? Status.mergeTimeline(state.timeline, body.timeline)
+                  : (body.timeline || []);
+                renderTimeline();
+              })
+              .catch(() => {});
+          }
+        }
+        updateLiveRegion(prev);
+        renderMemberPresence();
+        break;
+      }
       default:
         break;
     }
@@ -299,27 +464,63 @@
       notice.textContent = state.activeRoom.notice || '';
       notice.hidden = !state.activeRoom.notice;
     }
-    renderMembers();
+    renderMemberPresence();
     renderTimeline();
   }
 
-  function renderMembers() {
-    const wrap = el('group-room-members');
-    if (!wrap) return;
-    wrap.textContent = '';
+  function renderMemberPresence(focusActive) {
+    const list = el('group-presence-list');
+    if (!list) return;
+    // 移动端 overflow-x 在 aside 上（不是 ul）；桌面 aside 纵向滚动、scrollLeft 恒 0。
+    const scroller = el('group-room-presence') || list;
+    const previousScroll = scroller.scrollLeft;
+    list.textContent = '';
+    let activeRow = null;
     state.members.forEach(member => {
-      const chip = document.createElement('span');
-      chip.className = 'group-member';
-      if (member.is_admin) chip.classList.add('admin');
-      if (state.speaking === member.id) chip.classList.add('speaking');
-      chip.textContent = member.name + (member.is_admin ? ' (admin)' : '');
-      wrap.appendChild(chip);
+      const status = state.statuses[member.id];
+      const phase = status ? status.phase : 'idle';
+      const row = document.createElement('li');
+      row.className = `group-presence-row phase-${phase}`;
+      if (state.statusStale) row.classList.add('stale');
+      row.dataset.personaId = member.id;
+      row.style.setProperty('--group-hue', String(hueFor(member.id)));
+
+      const avatar = document.createElement('span');
+      avatar.className = 'group-avatar';
+      avatar.setAttribute('aria-hidden', 'true');
+      avatar.textContent = (member.name || member.id).slice(0, 1);
+
+      const info = document.createElement('span');
+      info.className = 'group-presence-info';
+      const name = document.createElement('span');
+      name.className = 'group-presence-name';
+      name.textContent = member.name + (member.is_admin ? '（admin）' : '');
+      const statusText = document.createElement('span');
+      statusText.className = 'group-presence-status';
+      statusText.textContent = Status
+        ? Status.formatPhase(phase, status ? status.tools : [], status ? status.tool_count : 0)
+        : phase;
+      if (status && status.tools && status.tools.length) {
+        statusText.title = status.tools.join('、');
+      }
+      info.appendChild(name);
+      info.appendChild(statusText);
+      row.appendChild(avatar);
+      row.appendChild(info);
+      list.appendChild(row);
+      if (!activeRow && phase !== 'idle') activeRow = row;
     });
-    if (state.activeRoom && state.activeRoom.notice) {
-      const notice = document.createElement('div');
-      notice.className = 'group-notice';
-      notice.textContent = `群公告：${state.activeRoom.notice}`;
-      wrap.appendChild(notice);
+    if (focusActive && activeRow) {
+      // 只滚动状态条自身，绝不调用 scrollIntoView（会纵向滚动页面/时间线）。
+      const left = activeRow.offsetLeft;
+      const right = left + activeRow.offsetWidth;
+      if (left < scroller.scrollLeft) {
+        scroller.scrollLeft = Math.max(0, left - 8);
+      } else if (right > scroller.scrollLeft + scroller.clientWidth) {
+        scroller.scrollLeft = right - scroller.clientWidth + 8;
+      }
+    } else {
+      scroller.scrollLeft = previousScroll;
     }
   }
 
@@ -366,9 +567,11 @@
     return hash;
   }
 
-  function setStatus(text) {
+  function setStatus(text, kind) {
+    state.statusText = text || '';
+    state.statusKind = text ? (kind || 'op') : '';
     const status = el('group-room-status');
-    if (status) status.textContent = text || '';
+    if (status) status.textContent = state.statusText;
   }
 
   async function sendRoomMessage() {
@@ -379,6 +582,7 @@
     input.value = '';
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
       state.ws.send(JSON.stringify({ type: 'chat', content: text }));
+      clearOpStatus();
       return;
     }
     // WS 未连通时的降级：走 HTTP（会等整轮跑完才返回）。
@@ -388,15 +592,17 @@
         body: JSON.stringify({ content: text, workspace: workspaceParam() }),
       });
       state.timeline = body.timeline || state.timeline;
+      clearOpStatus();
       renderRoom();
     } catch (err) {
-      setStatus(`发送失败：${err.message}`);
+      setStatus(`发送失败：${err.message}`, 'op');
     }
   }
 
   // ---------------------------------------------------------------- 对话框
 
   function openDialog(title, fields, onSubmit) {
+    closeSidebar();
     const dialog = el('group-dialog');
     const scrim = el('group-dialog-scrim');
     dialog.textContent = '';
@@ -566,6 +772,12 @@
     if (personaAdd) personaAdd.addEventListener('click', () => openPersonaDialog(null));
     const roomAdd = el('group-room-add');
     if (roomAdd) roomAdd.addEventListener('click', () => openRoomDialog(null));
+    const drawerToggle = el('group-drawer-toggle');
+    if (drawerToggle) drawerToggle.addEventListener('click', openSidebar);
+    const emptyDrawer = el('group-empty-drawer');
+    if (emptyDrawer) emptyDrawer.addEventListener('click', openSidebar);
+    const sidebarScrim = el('group-sidebar-scrim');
+    if (sidebarScrim) sidebarScrim.addEventListener('click', closeSidebar);
     const send = el('group-room-send');
     if (send) send.addEventListener('click', sendRoomMessage);
     const input = el('group-room-input');

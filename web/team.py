@@ -29,7 +29,7 @@ from agent.team.models import (
     Room,
 )
 from agent.team.orchestrator import RoomOrchestrator, RoundResult
-from agent.team.runner import TurnOutcome
+from agent.team.runner import ProgressCallback, TurnOutcome
 from agent.team.store import TeamStore
 from web.session import SessionManager, WebSessionRunner
 
@@ -219,10 +219,14 @@ class _WorkspaceRunner(WebSessionRunner):
         super().__init__(service.manager)
         self._team = team
 
-    async def run(self, session_id, message, *, timeout=None, silent_marker=None):
+    async def run(
+        self, session_id, message, *, timeout=None, silent_marker=None,
+        on_progress: ProgressCallback | None = None,
+    ):
         try:
             return await super().run(
-                session_id, message, timeout=timeout, silent_marker=silent_marker
+                session_id, message, timeout=timeout, silent_marker=silent_marker,
+                on_progress=on_progress,
             )
         finally:
             self._team.pool.notify_capacity()

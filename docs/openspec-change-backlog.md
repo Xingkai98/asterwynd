@@ -117,6 +117,10 @@
 
 ## 未实现队列
 
+### 第二十二批：群聊成员运行状态（#307）
+
+- `web-agent-group-member-status`（issue [#307](https://github.com/Xingkai98/asterwynd/issues/307)）：**设计阶段（停轮待确认）**。群聊左侧 per-member 状态栏：空闲 / 运行中 / 正在思考 / 正在输入 / 正在使用工具（带工具名），优先级 `tool > typing > thinking > running > idle`；状态只由真实 AgentLoop 事件与钩子驱动（`run_started` / `before_iteration` / `assistant_delta` / `reasoning_delta` / `before_tool_execute` / `after_tool_execute` / `on_completion`），禁止定时器伪造；新增房间级 `member_status` 事件（**完整非空闲状态表** + 单调 `status_seq`，允许短窗口合并，不转发 token 增量），补建会话失败/轮次取消/意外异常 teardown 与空产出防御性契约，`room_state` 增加 per-member 快照并修正握手发送顺序；桌面左侧状态栏，移动端 390px 专用布局（形态待用户拍板 Q1）。Non-Goals：真正的多成员并发（编排器仍串行，解释待 Q3 确认）、用户打断、子 agent/workflow 内部阶段、非流式时的「正在输入」。与 `web-agent-group-chat` 是增强关系；设计证据见 change 的 `reviews/`（grill-design.md 与 grill-adversarial 各轮；收口后落为规范的 `grill-adversarial.md`）。
+
 ### 第二十批：workflow foreach 预算截断可见性（#286）
 
 - `foreach-budget-truncation-visibility`（issue [#286](https://github.com/Xingkai98/asterwynd/issues/286)）：**已归档 2026-10-03**。#279（静态截断可见）的独立对抗验证拆出的**同缺陷类、范围外**项——治 `max_items=0` 路径下的**预算**截断静默。`_resolve_items`（`scheduler.py:2675-2678`）在 `max_items==0` 时返回 `items[:remaining_expansion_capacity()]`，切片使 `_check_foreach_budget`（`:2167`）的 `run+delta>limit` **刚好不触发** ⇒ 超预算项**静默丢弃**（实测：60 声明 / 24 展开 / 36 静默丢，`status=completed`、`diagnostics={}`）。**交付**：扩展 #279 共享 helper `_foreach_visibility_fields`（去 `max_items>0` 前置、加成因判别字段 `items_omitted_cause`），**三出口**一致报告「声明 N / 展开 M / 省略 K」+ 成因（`max_items` vs `budget`）——dry-run 条目、`GetWorkflow(detail='nodes')` 投影、**`RunWorkflow` 结果信封**（用户拍板 OQ2=(b) 新增出口，一并补 #279 静态字段缺口）；字段**后写**绕过 `_bounded_node` 白名单；成因字段不复用既有 `reason` 键。**对抗验证修正**：proposal 的「非 terminal 一律响亮」被实测证伪（切片 ≤ `max_fan_in` 时非 terminal 同样静默），边界文字改「切片后预算仍够图跑完即静默」；design「静态路径逐字节不变」改为「既有字段值不变 + 新增成因键」。**Non-Goal**：不改 `max_items` 默认值（#276）、不改 `max_items=0` 语义、不改 #279 静态面、成因不细化到绑定维度、不改 `GetWorkflow` 默认 `detail='summary'` 出口。research_tier = light。**验收**：review-loop 2 轮 PASS（R1 PASS + 3 Low → 修 → R2 确认 PASS）；新测试 7 条（`test_foreach_truncation_visibility.py` 25 passed）；`agent/{subagent,tools}` 1710 passed；benchmark-gate PASS（1.0000）；全量除 2 处预存在 `/tmp` 环境失败外全绿。

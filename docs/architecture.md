@@ -110,7 +110,9 @@ Web 端提供 workflow 运行态 DAG 实时图（`web/static/workflow_graph.js`�
 
 **群内会话的 pending 降级**：`kind: room_member` 的会话撤销 `AskUserQuestion` 工具，审批类调用按 fail-closed **立即**判定为 unavailable——群聊轮次可能无人值守，走 `WebApprovalHandler`（缺省 600s）/ `WebQuestionHandler`（300s）会把整轮阻塞到超时。人设单聊（`kind: persona_chat`）是用户在场的会话，**不降级**。
 
-**Web 面**：`web/team.py` 的 `TeamService` 持有人设/房间 CRUD、级联删除、内部会话工厂与房间级事件总线（`RoomEventBus`）。HTTP 面在 `/api/team*`（总览 / 人设 / 房间 / 时间线 / 发消息 / 进入单聊）；房间级 WebSocket 是 `/ws/room/{room_id}`——现有 `/ws/{session_id}` 按 session 绑定，不适用于「多成员会话的聚合」。前端群聊 pane 在 `web/static/group.js`（Group 视图）：左侧人设/房间管理，右侧房间时间线（按**发言人**区分不同 agent，用户 / 成员 / 系统三类消息各有独立形态），输入框行首 `@名字` 点名。
+**成员运行状态可观测**（change `web-agent-group-member-status`）：编排器为每个成员维护 `idle` / `running` / `thinking` / `typing` / `tool` 五档状态（优先级 `tool > typing > thinking > running > idle`），只消费 AgentLoop 钩子与流式事件，并且只向房间总线发**无内容**的进度信号；`member_status` 携带完整非空闲状态表与房间级单调 `status_seq`（允许短窗口合并），终态事件携带重置后的 seq；`room_state` 带 per-member 快照。前端桌面左侧 presence，390px 下为顶部 56px 横向成员条；不转发 token 增量，重连以快照恢复。
+
+**Web 面**：`web/team.py` 的 `TeamService` 持有人设/房间 CRUD、级联删除、内部会话工厂与房间级事件总线（`RoomEventBus`）。HTTP 面在 `/api/team*`（总览 / 人设 / 房间 / 时间线 / 发消息 / 进入单聊）；房间级 WebSocket 是 `/ws/room/{room_id}`——现有 `/ws/{session_id}` 按 session 绑定，不适用于「多成员会话的聚合」。前端群聊 pane 在 `web/static/group.js`（Group 视图）：左侧人设/房间管理，右侧房间时间线（按**发言人**区分不同 agent，用户 / 成员 / 系统三类消息各有独立形态），输入框行首 `@名字` 点名；时间线左侧是 per-member 成员状态栏（移动端为顶部 56px 横向条，可横向滑动）。
 
 ## 工具系统
 

@@ -44,6 +44,7 @@ from agent.memory.manager import MemoryManager
 from agent.hooks.builtin import TracingHook
 from agent.team.runner import (
     DEFAULT_TURN_TIMEOUT_SECONDS,
+    ProgressCallback,
     SessionRunner,
     TurnOutcome,
     is_silent,
@@ -452,6 +453,70 @@ class SessionEventChannel:
             )
             self.detach(handle)
             return False
+
+
+class ProgressObserver:
+    """把 AgentLoop 事件/钩子归一成无内容的成员进度信号（群聊状态栏用）。
+
+    实现 ``Hook`` 的全部 7 个方法；``after_llm_call`` / ``on_error`` 为 no-op
+    （``on_error`` 也会在工具异常时触发，不能当 run 终态）。``on_loop_event`` 由
+    ``_run_session_locked`` 的 ``on_event`` 闭包旁路调用，**每个 LLM 调用最多发一个**
+    ``assistant_delta`` / ``reasoning_delta`` 信号，且不携带任何文本内容。
+
+    回调异常只记日志，绝不影响 run；observer 是逐 run 新实例，由 run 的 finally 摘除。
+    """
+
+    def __init__(self, progress: ProgressCallback) -> None:
+        self._progress = progress
+        self._saw_delta = False
+        self._saw_reasoning = False
+
+    async def _emit(self, kind: str, data: dict | None = None) -> None:
+        try:
+            await self._progress(kind, data or {})
+        except Exception:  # noqa: BLE001 - 进度失败不得影响成员 run
+            logger.exception("member progress callback failed (ignored)")
+
+    async def on_run_started(self, run_config) -> None:
+        await self._emit("run_started")
+
+    async def before_iteration(self, iteration, messages) -> None:
+        self._saw_delta = False
+        self._saw_reasoning = False
+        await self._emit("iteration_started", {"iteration": iteration})
+
+    async def after_llm_call(self, response) -> None:
+        return None
+
+    async def before_tool_execute(self, tool_call) -> None:
+        await self._emit("tool_started", {
+            "tool_id": getattr(tool_call, "id", ""),
+            "tool_name": getattr(tool_call, "name", ""),
+        })
+
+    async def after_tool_execute(self, tool_call, result, error_type=None) -> None:
+        await self._emit("tool_finished", {
+            "tool_id": getattr(tool_call, "id", ""),
+            "tool_name": getattr(tool_call, "name", ""),
+        })
+
+    async def on_error(self, error) -> None:
+        return None
+
+    async def on_completion(self, result) -> None:
+        await self._emit("run_completed")
+
+    async def on_loop_event(self, event_type: str, data: dict) -> None:
+        if event_type == "assistant_delta":
+            if not self._saw_delta:
+                self._saw_delta = True
+                await self._emit("assistant_delta")
+        elif event_type == "reasoning_delta":
+            if not self._saw_reasoning:
+                self._saw_reasoning = True
+                await self._emit("reasoning_delta")
+        elif event_type == "assistant_stream_complete":
+            await self._emit("stream_complete")
 
 
 class UnavailableApprovalHandler(FailClosedApprovalHandler):
@@ -1901,6 +1966,7 @@ class SessionManager:
         images: list[dict] | None = None,
         *,
         handle: ConnectionHandle | None = None,
+        progress: ProgressCallback | None = None,
     ) -> None:
         """Run the agent with user message, streaming events via the session channel.
 
@@ -1940,7 +2006,8 @@ class SessionManager:
             await session.run_lock.acquire()
             try:
                 await self._run_session_locked(
-                    session, user_message, channel, handle, ws_receive, images
+                    session, user_message, channel, handle, ws_receive, images,
+                    progress=progress,
                 )
             finally:
                 session.run_lock.release()
@@ -2002,9 +2069,12 @@ class SessionManager:
         handle: ConnectionHandle | None,
         ws_receive=None,
         images: list[dict] | None = None,
+        *,
+        progress: ProgressCallback | None = None,
     ) -> None:
         """``run_session`` 的锁内实现：实际驱动 AgentLoop 与 queue drain。"""
         queue: asyncio.Queue = asyncio.Queue()
+        observer = ProgressObserver(progress) if progress is not None else None
 
         # reasoning 降级标志的注入（issue #256 D7）：真值存在 session 上（跨 run
         # 存活），每次 run 开始时注入当前上下文的 ContextVar —— 因为每个用户回合
@@ -2013,6 +2083,8 @@ class SessionManager:
         set_reasoning_disabled(session.reasoning_disabled)
 
         async def on_event(event_type: str, data: dict):
+            if observer is not None:
+                await observer.on_loop_event(event_type, data)
             await queue.put({"type": event_type, "data": data})
 
         # Wire question handler's event sender to the queue
@@ -2094,6 +2166,8 @@ class SessionManager:
                     })
                 await queue.put(None)  # sentinel
 
+        if observer is not None:
+            session.agent.hooks.hooks.append(observer)
         agent_task = asyncio.create_task(run_agent())
         receiver_task = None
         if ws_receive is not None:
@@ -2139,6 +2213,12 @@ class SessionManager:
                     await agent_task
                 except asyncio.CancelledError:
                     pass
+            if observer is not None:
+                # 覆盖正常结束/超时/取消/异常；必须在整个 run 的 finally 里摘除，
+                # 不能只放在正常路径（否则后续 run 会重复触发）。
+                session.agent.hooks.hooks = [
+                    h for h in session.agent.hooks.hooks if h is not observer
+                ]
 
         # Remove debug hook
         if self.debug_enabled:
@@ -2182,6 +2262,7 @@ class WebSessionRunner:
         *,
         timeout: float | None = None,
         silent_marker: str | None = None,
+        on_progress: ProgressCallback | None = None,
     ) -> TurnOutcome:
         session = self._manager.get_session(session_id)
         if session is None:
@@ -2201,7 +2282,9 @@ class WebSessionRunner:
         )
         try:
             await asyncio.wait_for(
-                self._manager.run_session(session, message),
+                self._manager.run_session(
+                    session, message, progress=on_progress
+                ),
                 timeout=effective_timeout,
             )
         except (asyncio.TimeoutError, TimeoutError):
