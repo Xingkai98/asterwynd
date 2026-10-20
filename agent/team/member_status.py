@@ -35,19 +35,6 @@ PHASE_PRIORITY = {
     PHASE_IDLE: 0,
 }
 
-SIGNALS = (
-    "slot_started",
-    "run_started",
-    "iteration_started",
-    "reasoning_delta",
-    "assistant_delta",
-    "stream_complete",
-    "tool_started",
-    "tool_finished",
-    "run_completed",
-)
-
-
 @dataclass(frozen=True)
 class MemberStatus:
     """一个成员的当前状态；``tools`` 是 ``(tool_call_id, tool_name)`` 有序元组。"""
@@ -138,9 +125,9 @@ def reduce_signal(
         elif tools:
             # 防御未配对事件：id 不匹配时按 name 移除第一个同名项。
             removed = False
-            tool_id, name = key
-            for index, (existing_id, existing_name) in enumerate(tools):
-                if existing_name == name and (not tool_id or existing_id == tool_id):
+            _, name = key
+            for index, (_, existing_name) in enumerate(tools):
+                if existing_name == name:
                     tools = tools[:index] + tools[index + 1:]
                     removed = True
                     break

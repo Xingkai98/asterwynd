@@ -155,6 +155,21 @@ async def test_group_presence_desktop_events_and_lifecycle(page, group_server):
     )
 
     assert await page.text_content("#group-room-notice") == "先说结论"
+    geometry = await page.evaluate(
+        """() => {
+          const sidebar = document.querySelector('#group-sidebar').getBoundingClientRect();
+          const presence = document.querySelector('#group-room-presence').getBoundingClientRect();
+          const timeline = document.querySelector('#group-room-timeline').getBoundingClientRect();
+          return {
+            sidebarRight: sidebar.right,
+            presenceLeft: presence.left,
+            presenceRight: presence.right,
+            timelineLeft: timeline.left,
+          };
+        }"""
+    )
+    assert geometry["sidebarRight"] <= geometry["presenceLeft"] + 1, geometry
+    assert geometry["presenceRight"] <= geometry["timelineLeft"] + 1, geometry
     initial = await page.eval_on_selector_all(
         ".group-presence-status", "els => els.map(e => e.textContent)"
     )
@@ -311,3 +326,104 @@ async def test_group_presence_mobile_q1_strip(page, group_server):
         timeout=BROWSER_TIMEOUT_MS,
     )
     assert await page.eval_on_selector("#group-room-timeline", "e => e.scrollTop") == scroll_before
+
+
+@pytest.mark.asyncio
+async def test_group_status_late_limit_refetch_and_op_clear(page, group_server):
+    await page.set_viewport_size({"width": 1200, "height": 800})
+    await page.goto(group_server["url"])
+    await page.wait_for_function(
+        "() => window.AsterwyndGroupStatus !== undefined",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+    await page.click("#group-tab")
+    personas, room_id = await _create_room(page, group_server["url"], ["甲", "乙"])
+    await page.evaluate("() => window.AsterwyndGroup.render()")
+    await page.wait_for_selector("#group-room-list .group-item-name")
+    await page.click("#group-room-list .group-item-name")
+    await page.wait_for_function(
+        "() => document.querySelector('#group-room-status').textContent === '已连接'",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+    await page.wait_for_function(
+        "() => { const row = document.querySelector('.group-presence-row');"
+        " return row && !row.classList.contains('stale'); }",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+
+    # 迟到的 limit 终态（seq 更旧）不改状态，但仍必须重拉时间线。
+    app = group_server["app"]
+    ws_path = app.state.session_manager.primary_workspace
+    app.state.team_service.team_for(ws_path).orchestrator.log_for(room_id).append_system(
+        "LIMIT-MARKER"
+    )
+    await _push(group_server, room_id, "member_status", {
+        "status_seq": 5,
+        "statuses": [{
+            "persona_id": personas["甲"],
+            "phase": "thinking",
+            "tools": [],
+            "tool_count": 0,
+        }],
+    })
+    await page.wait_for_selector(".group-presence-row.phase-thinking")
+    await _push(group_server, room_id, "round_ended", {
+        "termination": "limit", "status_seq": 1, "limit": 4,
+    })
+    await page.wait_for_function(
+        "() => document.querySelector('#group-room-timeline').textContent.includes('LIMIT-MARKER')",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+    assert await page.locator(".group-presence-row.phase-thinking").count() == 1
+
+    # 发送失败（op）提示在下一次成功发送后清除。
+    await page.evaluate(
+        "() => { const s = window.AsterwyndGroup._state;"
+        " if (s.ws) { s.ws.onclose = null; s.ws.close(); s.ws = null; } }"
+    )
+    await page.evaluate(
+        """() => {
+          const original = window.fetch;
+          window.__origFetch = original;
+          window.fetch = (url, opts) => {
+            if (String(url).includes('/messages')) {
+              return Promise.reject(new Error('boom'));
+            }
+            return original(url, opts);
+          };
+        }"""
+    )
+    await page.fill("#group-room-input", "失败测试")
+    await page.click("#group-room-send")
+    await page.wait_for_function(
+        "() => document.querySelector('#group-room-status').textContent.includes('发送失败')",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+    await page.evaluate("() => { window.fetch = window.__origFetch; }")
+    await page.fill("#group-room-input", "重试成功")
+    await page.click("#group-room-send")
+    await page.wait_for_function(
+        "() => !document.querySelector('#group-room-status').textContent.includes('发送失败')",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+
+
+@pytest.mark.asyncio
+async def test_group_status_disconnect_marks_stale(page, group_server):
+    await page.set_viewport_size({"width": 1200, "height": 800})
+    await page.goto(group_server["url"])
+    await page.wait_for_function(
+        "() => window.AsterwyndGroupStatus !== undefined",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+    await page.click("#group-tab")
+    personas, room_id = await _create_room(page, group_server["url"], ["甲"])
+    await page.evaluate("() => window.AsterwyndGroup.render()")
+    await page.wait_for_selector("#group-room-list .group-item-name")
+    await page.click("#group-room-list .group-item-name")
+    await page.wait_for_function(
+        "() => document.querySelector('#group-room-status').textContent === '已连接'",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+    await page.evaluate("() => window.AsterwyndGroup._state.ws.close()")
+    await page.wait_for_selector(".group-presence-row.stale", timeout=BROWSER_TIMEOUT_MS)

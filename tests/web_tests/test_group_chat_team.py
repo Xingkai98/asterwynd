@@ -900,3 +900,52 @@ class TestProgressMapping:
         outcome = await runner.run(sid, "hi", on_progress=boom)
         assert outcome.status == "text"
         assert outcome.text.strip() == "好的"
+
+    @pytest.mark.asyncio
+    async def test_observer_is_removed_between_runs(self, tmp_path):
+        llm = ScriptedLLM([
+            LLMResponse(content="第一次"),
+            LLMResponse(content="第二次"),
+        ], stream=True)
+        service = _service(tmp_path, llm)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        sid = await service.ensure_persona_chat_session(ws, a.id)
+        runner = WebSessionRunner(service.manager)
+
+        first: list[str] = []
+        second: list[str] = []
+
+        async def collect_first(kind, data):
+            first.append(kind)
+
+        async def collect_second(kind, data):
+            second.append(kind)
+
+        await runner.run(sid, "第一次", on_progress=collect_first)
+        await runner.run(sid, "第二次", on_progress=collect_second)
+        assert first.count("iteration_started") == 1
+        assert first.count("run_completed") == 1
+        assert second.count("iteration_started") == 1
+        assert second.count("run_completed") == 1
+        assert first.count("assistant_delta") == 1
+        assert second.count("assistant_delta") == 1
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_has_no_typing_signal(self, tmp_path):
+        llm = ScriptedLLM([LLMResponse(content="非流式")], stream=False)
+        service = _service(tmp_path, llm)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        sid = await service.ensure_persona_chat_session(ws, a.id)
+        runner = WebSessionRunner(service.manager)
+        kinds: list[str] = []
+
+        async def collect(kind, data):
+            kinds.append(kind)
+
+        outcome = await runner.run(sid, "hi", on_progress=collect)
+        assert outcome.status == "text"
+        assert "assistant_delta" not in kinds
+        assert "stream_complete" not in kinds
+        assert "iteration_started" in kinds

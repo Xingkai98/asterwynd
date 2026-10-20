@@ -140,6 +140,15 @@ def test_unmatched_tool_finished_is_noop():
     assert reduce_signal(tool, "tool_finished", {"tool_id": "x", "tool_name": "Read"}) is None
 
 
+def test_tool_finished_name_fallback_for_mismatched_id():
+    tool = MemberStatus(PHASE_TOOL, (("t1", "Bash"), ("t2", "Read")))
+    done = reduce_signal(
+        tool, "tool_finished", {"tool_id": "observed-copy", "tool_name": "Bash"}
+    )
+    assert done.phase == PHASE_TOOL
+    assert done.tool_names == ["Read"]
+
+
 def test_as_dict_shape():
     tool = MemberStatus(PHASE_TOOL, (("a", "Bash"), ("b", "Bash"), ("c", "Read")))
     assert tool.as_dict("p1") == {

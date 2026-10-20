@@ -571,10 +571,8 @@ class RoomOrchestrator:
         new = reduce_signal(table.get(persona_id), kind, data)
         if new is None:
             return
-        if new.is_idle:
-            table.pop(persona_id, None)
-        else:
-            table[persona_id] = new
+        # reduce_signal 只产生非 idle 状态；idle 由 _reset_member/_reset_room_statuses 负责。
+        table[persona_id] = new
         self._status_seq[room_id] = self._status_seq.get(room_id, 0) + 1
         self._mark_status_dirty(room_id, persona_id)
 
@@ -639,7 +637,8 @@ class RoomOrchestrator:
                 task = self._status_tasks.get(room_id)
                 if task is not None and not task.done():
                     continue
-            break
+            return
+        logger.warning("成员状态 flush 达到迭代上限，仍有待发射变化：%s", room_id)
 
     def _reset_member(self, room_id: str, persona_id: str) -> int:
         """幂等重置一个成员：表未变时返回当前 seq，不递增、不标脏。"""
@@ -660,12 +659,17 @@ class RoomOrchestrator:
         return self._status_seq.get(room_id, 0)
 
     def status_snapshot(self, room_id: str) -> tuple[list[dict], int]:
-        """返回 (非空闲状态表副本, 当前房间级 seq)，供 room_state 使用。"""
+        """返回 (非空闲状态表副本, 当前房间级 seq)，供 room_state 使用。
+
+        只返回当前仍在房间里的成员，避免成员中途被移出后快照里留下幽灵状态。
+        """
         table = self._statuses.get(room_id, {})
+        room = self._store.get_room(room_id)
+        members = set(room.members) if room is not None else set()
         statuses = [
             status.as_dict(pid)
             for pid, status in table.items()
-            if not status.is_idle
+            if not status.is_idle and pid in members
         ]
         return statuses, self._status_seq.get(room_id, 0)
 
@@ -697,19 +701,18 @@ class RoomOrchestrator:
     ) -> None:
         """取消/意外异常的 status-only teardown；强引用后台 task + 有界等待。"""
         async def _run() -> None:
+            async def _flush_and_emit() -> None:
+                await self._flush_status_emits(room_id)
+                await self._emit("round_ended", {
+                    "room_id": room_id,
+                    "termination": termination,
+                    "limit": limit,
+                    "status_seq": status_seq,
+                })
+
             try:
-                await asyncio.wait_for(
-                    self._flush_status_emits(room_id), timeout=2.0
-                )
-                await asyncio.wait_for(
-                    self._emit("round_ended", {
-                        "room_id": room_id,
-                        "termination": termination,
-                        "limit": limit,
-                        "status_seq": status_seq,
-                    }),
-                    timeout=2.0,
-                )
+                # 整体 2s 上限（不是 flush 2s + emit 2s）。
+                await asyncio.wait_for(_flush_and_emit(), timeout=2.0)
             except asyncio.CancelledError:
                 raise
             except asyncio.TimeoutError:

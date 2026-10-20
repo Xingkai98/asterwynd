@@ -822,3 +822,69 @@ class TestMemberStatusEvents:
         gate.set()
         review.release.set()
         await second
+
+    @pytest.mark.asyncio
+    async def test_snapshot_filters_members_removed_from_room(self, team):
+        store, room, runner, resolver, _ = team
+        orch = _EventedOrchestrator(store=store, resolver=resolver, runner=runner)
+        orch._set_signal(room.id, "pA", "slot_started", {})
+        room.members = ["pB"]
+        store.save_room(room)
+        statuses, _ = orch.status_snapshot(room.id)
+        assert all(item["persona_id"] != "pA" for item in statuses)
+
+    @pytest.mark.asyncio
+    async def test_message_during_round_end_flush_starts_new_round(self, team):
+        """N1：reset+release 之后的 flush 窗口内到达的消息必须开启新一轮。"""
+        store, room, runner, resolver, _ = team
+        orch = _EventedOrchestrator(store=store, resolver=resolver, runner=runner)
+        runner.default = TurnOutcome(status="silent")
+
+        original_flush = orch._flush_status_emits
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        calls = 0
+
+        async def gated_flush(room_id):
+            nonlocal calls
+            calls += 1
+            if calls == 2:               # 第一轮的 round-end flush（成员终态 flush 是 1）
+                entered.set()
+                await release.wait()
+            await original_flush(room_id)
+
+        orch._flush_status_emits = gated_flush
+        first = asyncio.create_task(orch.submit_user_message(room.id, "第一轮"))
+        await asyncio.wait_for(entered.wait(), timeout=2)
+
+        gate = asyncio.Event()
+        runner.gate = gate               # 让第二轮停在 runner，保持 active
+        second = asyncio.create_task(orch.submit_user_message(room.id, "第二轮"))
+        for _ in range(200):
+            if len(runner.calls) >= 2:
+                break
+            await asyncio.sleep(0)
+        assert orch.is_round_active(room.id) is True
+        queued = await orch.submit_user_message(room.id, "第三轮")
+        assert queued.queued is True, "第三轮必须排队进 R2，而不是开启 R3"
+
+        release.set()
+        await first
+        assert orch.is_round_active(room.id) is True, "旧轮 flush 结束不得释放 R2"
+        gate.set()
+        await second
+        assert len(runner.calls) == 2, "M3 不得驱动第三个成员回合"
+
+    @pytest.mark.asyncio
+    async def test_resume_round_first_thinking_comes_from_iteration_started(self, team):
+        store, room, runner, resolver, _ = team
+        orch = _EventedOrchestrator(store=store, resolver=resolver, runner=runner)
+        runner.default = TurnOutcome(status="silent")
+        # resume run 没有 run_started；只有 iteration_started。
+        runner.progress_script["room-pA"] = [("iteration_started", {})]
+        await orch.submit_user_message(room.id, "你好")
+        thinking = [
+            data for data in orch.by_type("member_status")
+            if any(s["phase"] == "thinking" for s in data["statuses"])
+        ]
+        assert thinking, "iteration_started 必须能独立把状态推到 thinking"
