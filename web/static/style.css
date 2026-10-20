@@ -2346,3 +2346,12 @@ main { flex: 1; min-height: 0; overflow: hidden; }
 
 .group-empty { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 .group-empty-drawer { padding: 6px 10px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .group-sidebar,
+  .group-presence-row,
+  .group-avatar {
+    animation: none !important;
+    transition: none !important;
+  }
+}

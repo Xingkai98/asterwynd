@@ -327,6 +327,33 @@ async def test_group_presence_mobile_q1_strip(page, group_server):
     )
     assert await page.eval_on_selector("#group-room-timeline", "e => e.scrollTop") == scroll_before
 
+    # presence 重绘（时间线事件触发）必须保留横向滚动位置。
+    await page.evaluate(
+        "() => { document.querySelector('#group-room-presence').scrollLeft = 40; }"
+    )
+    await _push(group_server, room_id, "member_post", {
+        "persona_id": personas["戊"],
+        "speaker": personas["戊"],
+        "text": "完成",
+        "seq": 999,
+        "status_seq": 3,
+    })
+    await page.wait_for_function(
+        "() => document.querySelector('#group-room-timeline').textContent.includes('完成')",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+    assert await page.eval_on_selector(
+        "#group-room-presence", "e => e.scrollLeft"
+    ) == 40
+
+    # reduced-motion 下侧栏过渡关闭，presence 仍可用。
+    await page.emulate_media(reduced_motion="reduce")
+    duration = await page.eval_on_selector(
+        "#group-sidebar", "e => getComputedStyle(e).transitionDuration"
+    )
+    assert duration == "0s", duration
+    await page.wait_for_selector(".group-presence-row")
+
 
 @pytest.mark.asyncio
 async def test_group_status_late_limit_refetch_and_op_clear(page, group_server):

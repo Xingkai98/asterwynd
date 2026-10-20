@@ -136,6 +136,19 @@
     return PHASE_LABELS[phase] || PHASE_LABELS.idle;
   }
 
+  function mergeTimeline(current, incoming) {
+    // 按 room log seq 合并：重拉期间到达的新消息不丢；同 seq 以服务端条目为准。
+    const bySeq = new Map();
+    (Array.isArray(current) ? current : []).forEach(entry => {
+      if (entry && entry.seq != null) bySeq.set(entry.seq, entry);
+    });
+    (Array.isArray(incoming) ? incoming : []).forEach(entry => {
+      if (entry && entry.seq != null) bySeq.set(entry.seq, entry);
+    });
+    return Array.from(bySeq.values())
+      .sort((a, b) => Number(a.seq) - Number(b.seq));
+  }
+
   function describeChange(prev, next, names) {
     const before = (prev && prev.statuses) || {};
     const after = (next && next.statuses) || {};
@@ -167,5 +180,6 @@
     applySpeakingFallback,
     formatPhase,
     describeChange,
+    mergeTimeline,
   };
 })();

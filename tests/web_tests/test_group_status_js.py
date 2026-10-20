@@ -158,3 +158,24 @@ def test_describe_change_returns_one_line():
 
     same = call("describeChange", before, before, {"a": "甲"})
     assert same is None
+
+
+def test_merge_timeline_keeps_newer_entries_and_server_wins_same_seq():
+    current = [
+        {"seq": 1, "text": "old"},
+        {"seq": 3, "text": "arrived-during-fetch"},
+    ]
+    incoming = [
+        {"seq": 1, "text": "server-authoritative"},
+        {"seq": 2, "text": "server-entry"},
+    ]
+    merged = call("mergeTimeline", current, incoming)
+    assert [entry["seq"] for entry in merged] == [1, 2, 3]
+    assert merged[0]["text"] == "server-authoritative"
+    assert merged[2]["text"] == "arrived-during-fetch"
+
+
+def test_merge_timeline_ignores_client_only_null_seq_entries():
+    merged = call("mergeTimeline", [{"seq": None, "text": "synthetic"}],
+                  [{"seq": 1, "text": "server"}])
+    assert merged == [{"seq": 1, "text": "server"}]

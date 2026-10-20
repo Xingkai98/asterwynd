@@ -438,17 +438,10 @@
             api(withWorkspace(`/api/team/rooms/${roomId}/timeline`))
               .then(body => {
                 if (!state.activeRoom || state.activeRoom.id !== roomId) return;
-                // 按 seq 合并：重拉期间到达的新消息（已 append 到当前 timeline）不能丢；
-                // 服务端条目覆盖同 seq，客户端合成的 null-seq 条目由权威日志替换。
-                const bySeq = new Map();
-                state.timeline.forEach(entry => {
-                  if (entry.seq != null) bySeq.set(entry.seq, entry);
-                });
-                (body.timeline || []).forEach(entry => {
-                  if (entry.seq != null) bySeq.set(entry.seq, entry);
-                });
-                state.timeline = Array.from(bySeq.values())
-                  .sort((a, b) => Number(a.seq) - Number(b.seq));
+                // 按 seq 合并：重拉期间到达的新消息不能丢；同 seq 以服务端为准。
+                state.timeline = Status
+                  ? Status.mergeTimeline(state.timeline, body.timeline)
+                  : (body.timeline || []);
                 renderTimeline();
               })
               .catch(() => {});
