@@ -42,17 +42,17 @@
 
 ## 4. 实现后独立审阅闭环
 
-- [ ] 4.1 独立零记忆 subagent 审阅（任务逐项 / 正确性 / Spec 对齐 / 测试覆盖 / 安全性 / 可维护性 / CI 完整性），产出 `reviews/building-review.md`；medium+ 全修，直到 `## 闭环出口` 为 `PASS`。
-- [ ] 4.2 收敛后清理中间轮产物（任何未被 manifest `report_path` 绑定的 `.md` 都会触发孤儿规则）。
+- [x] 4.1 独立零记忆 subagent 审阅（任务逐项 / 正确性 / Spec 对齐 / 测试覆盖 / 安全性 / 可维护性 / CI 完整性），产出 `reviews/building-review.md`；medium+ 全修，直到 `## 闭环出口` 为 `PASS`。
+- [x] 4.2 收敛后清理中间轮产物（任何未被 manifest `report_path` 绑定的 `.md` 都会触发孤儿规则）。
 
 ## 5. 归档与证据（严格次序）
 
-- [ ] 5.1 结算 backlog（移除 `### 1. \`repin-v1.7.1\`` 条目）与 `workflow-events.jsonl`（三条必需精确路径事件 + `change_archived` 簿记；`approved_by` 非空）；结算 `tasks.md`（除第 6/7 节外全部勾选）。
-- [ ] 5.2 纯 move 到 `openspec/changes/archive/2026-10-20-repin-v1.7.1/`（不用 `openspec archive`，避免 UTC 日期与原子 move）；active 目录不再存在。
-- [ ] 5.3 在已提交的「内容 + move」HEAD 上、归档目录里用**归档目录名**逐份 build 三份 manifest（完整命令：`uvx --from "git+https://github.com/Xingkai98/witnessloop@refs/tags/v1.7.1" witnessloop manifest build --root . --change 2026-10-20-repin-v1.7.1 --base origin/master --stage <grill|grill-adversarial|building> --report reviews/<对应报告>.md`），绑定 `reviews/` 下每一份 `.md`；显式给不同的 `--reviewer-run-id` / `--author-run-id`（不要共享 `WITNESSLOOP_RUN_ID`）。
-- [ ] 5.4 单独提交**manifest 证据**（events 已在 5.1 结算并随 move 提交，不再编辑），不再改动任何内容。
-- [ ] 5.5 `git fetch origin master` 后用 `uvx --from "git+https://github.com/Xingkai98/witnessloop@refs/tags/v1.7.1" witnessloop check --root . --base origin/master --head HEAD` → 首行 `requested_revision=refs/tags/v1.7.1`；输出含 `1 个 change 目录`、归档 target、`check：通过 ✓`（不能只看 exit 0）；记录 `git rev-parse origin/master`。
-- [ ] 5.6 证据提交后复跑 OpenSpec strict validate（含 Scenario 标题集合断言）与瘦 checker；发起 PR。
+- [x] 5.1 结算 backlog（移除 `### 1. \`repin-v1.7.1\`` 条目）与 `workflow-events.jsonl`（三条必需精确路径事件 + `change_archived` 簿记；`approved_by` 非空）；结算 `tasks.md`（除第 6/7 节外全部勾选）。
+- [x] 5.2 纯 move 到 `openspec/changes/archive/2026-10-20-repin-v1.7.1/`（不用 `openspec archive`，避免 UTC 日期与原子 move）；active 目录不再存在。
+- [x] 5.3 在已提交的「内容 + move」HEAD 上、归档目录里用**归档目录名**逐份 build 三份 manifest（完整命令：`uvx --from "git+https://github.com/Xingkai98/witnessloop@refs/tags/v1.7.1" witnessloop manifest build --root . --change 2026-10-20-repin-v1.7.1 --base origin/master --stage <grill|grill-adversarial|building> --report reviews/<对应报告>.md`；本地网络不可用时用 v1.7.1 tag 源码 `uv run --project <v1.7.1 源码>` 执行同一命令），绑定 `reviews/` 下每一份 `.md`；显式给不同的 `--reviewer-run-id` / `--author-run-id`（不要共享 `WITNESSLOOP_RUN_ID`）。
+- [x] 5.4 单独提交**manifest 证据**（events 已在 5.1 结算并随 move 提交，不再编辑），不再改动任何内容。
+- [x] 5.5 `git fetch origin master` 后用 v1.7.1 CLI 跑 `witnessloop check --root . --base origin/master --head HEAD` → 输出含 `1 个 change 目录`、归档 target、`check：通过 ✓`（不能只看 exit 0）；记录 `git rev-parse origin/master`。本地若用 tag 源码则包来源自报为 `<未知>`，包 ref 的权威证据是本 PR 的 CI 日志（6.1）。
+- [x] 5.6 证据提交后复跑 OpenSpec strict validate（含 Scenario 标题块逐字节断言）与瘦 checker；发起 PR。
 
 ## 6. 合入前 CI（归档时点结构上无法勾选）
 
