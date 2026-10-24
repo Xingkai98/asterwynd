@@ -10,18 +10,18 @@ design 的 Decision 1–10 与三份 spec delta 的主体结构**可实施**：`
 
 ## Confirmed Decisions
 
-- **D1**：`Room.discussion_mode` 的持久化与向后兼容路径成立——`from_dict` 已有「缺字段按缺省读」的成熟写法（`reply_mode` 先例），新增字段无需迁移脚本，roundtrip 测试可照 `test_team_store.py` 既有三条用例扩展（设计已钉死）。来源: `agent/team/models.py:134-147`、`tests/agent/team/test_team_store.py:142-162`
-- **D2**：`single` 模式「零事件变化」是可测的——现有 `round_ended` payload 只有 4 个键，单轮分支可保持逐字段一致，快照断言有现实抓手（设计已钉死）。来源: `agent/team/orchestrator.py:393-398`、`tests/agent/team/test_orchestrator.py:313-317`
-- **D3**：把「一轮」抽象成「只含 1 轮的链」不会破坏既有房间互斥论证——`_rounds` 的「查—建」之间确实没有 `await` 点，编码规范成立（本轮确认）。来源: `agent/team/orchestrator.py:309-310,355-360`
-- **D4**：**现状**在「`_drive` 返回 → 释放认领」之间是一段**无 await 的同步区**，因此今天不存在「用户消息排队进入一条即将结束的轮次、随后无人消费」的时间窗；design 让认领跨轮持有后该窗口会被**新开**（这是 C1 的事实基础，本轮确认）。来源: `agent/team/orchestrator.py:369-385`
-- **D5**：停止讨论的两个入口都有现成接线，不需要新协议：房间 WS 处理器已持有 `orchestrator` 实例与房间事件总线，REST 侧 `TeamService` 已有 workspace 回落先例（设计已钉死方向）。来源: `web/server.py:680,714-740,175-178`、`web/team.py:473-482`
-- **D6**：`request_stop` 的幂等可用 `chain.stop_requested` 单一标志位实现，无需额外锁——asyncio 单线程下同步置位即原子，重复调用按标志位短路（与 design 的 `False` no-op 一致）。来源: `design.md:99`、`agent/team/orchestrator.py:296-310`
-- **D7**：`TeamConfig` + `_parse_team_config` 是三个安全阀参数的正确落点，且正整数校验有现成 helper 可直接复用（设计已钉死落点）。来源: `agent/config.py:273-291,1677-1713,1572-1582`
-- **D8**：链期间的「轮间不闪状态」不需要新机制——`room_state.round_active` 在整条链期间保持 `true`，前端 `applySnapshot` 只在 `round_active === false` 时清空状态表，正好达成 design 想要的「轮间不显示本轮结束」（本轮确认）。来源: `web/static/group_status.js:84-95`、`web/server.py:691-704`
-- **D9**：双终态不会因 `status_seq` 相等而被前端丢弃——`applyTerminal` 的守卫是**严格小于**（`seq < state.seq`），因此同 seq 的 `round_ended` 与 `discussion_ended` 都会被应用（本轮确认，可用于 C6 的守卫设计）。来源: `web/static/group_status.js:60-65`
-- **D10**：`room_state` 新增字段不破坏既有 Web 用例——现有断言是「存在性 + 取值」，不做整字典比较（本轮确认）。来源: `tests/web_tests/test_group_chat_server.py:291-304`
-- **D11**：`RoundResult` 追加带默认值的新字段不破坏既有构造点——现有构造全部用关键字参数（`room_id=/queued=/termination=/posts=/systems=/slots=/limit=`），dataclass 追加默认值字段安全（本轮确认）。来源: `agent/team/orchestrator.py:334-340,399-407`
-- **D12**：RIR 满足 `research_tier: full` 的字段门槛（status/reason/research questions/findings/design impact 五段齐全），且「本地参考仓库不可用」已按仓库规则如实记录并给出替代依据（设计已钉死，本轮确认）。来源: `proposal.md:60-80`、`AGENTS.md`「业界调研门禁」
+- **决策**：D1 — `Room.discussion_mode` 的持久化与向后兼容路径成立——`from_dict` 已有「缺字段按缺省读」的成熟写法（`reply_mode` 先例），新增字段无需迁移脚本，roundtrip 测试可照 `test_team_store.py` 既有三条用例扩展（设计已钉死）。来源: `agent/team/models.py:134-147`、`tests/agent/team/test_team_store.py:142-162`
+- **决策**：D2 — `single` 模式「零事件变化」是可测的——现有 `round_ended` payload 只有 4 个键，单轮分支可保持逐字段一致，快照断言有现实抓手（设计已钉死）。来源: `agent/team/orchestrator.py:393-398`、`tests/agent/team/test_orchestrator.py:313-317`
+- **决策**：D3 — 把「一轮」抽象成「只含 1 轮的链」不会破坏既有房间互斥论证——`_rounds` 的「查—建」之间确实没有 `await` 点，编码规范成立（本轮确认）。来源: `agent/team/orchestrator.py:309-310,355-360`
+- **决策**：D4 — **现状**在「`_drive` 返回 → 释放认领」之间是一段**无 await 的同步区**，因此今天不存在「用户消息排队进入一条即将结束的轮次、随后无人消费」的时间窗；design 让认领跨轮持有后该窗口会被**新开**（这是 C1 的事实基础，本轮确认）。来源: `agent/team/orchestrator.py:369-385`
+- **决策**：D5 — 停止讨论的两个入口都有现成接线，不需要新协议：房间 WS 处理器已持有 `orchestrator` 实例与房间事件总线，REST 侧 `TeamService` 已有 workspace 回落先例（设计已钉死方向）。来源: `web/server.py:680,714-740,175-178`、`web/team.py:473-482`
+- **决策**：D6 — `request_stop` 的幂等可用 `chain.stop_requested` 单一标志位实现，无需额外锁——asyncio 单线程下同步置位即原子，重复调用按标志位短路（与 design 的 `False` no-op 一致）。来源: `design.md:99`、`agent/team/orchestrator.py:296-310`
+- **决策**：D7 — `TeamConfig` + `_parse_team_config` 是三个安全阀参数的正确落点，且正整数校验有现成 helper 可直接复用（设计已钉死落点）。来源: `agent/config.py:273-291,1677-1713,1572-1582`
+- **决策**：D8 — 链期间的「轮间不闪状态」不需要新机制——`room_state.round_active` 在整条链期间保持 `true`，前端 `applySnapshot` 只在 `round_active === false` 时清空状态表，正好达成 design 想要的「轮间不显示本轮结束」（本轮确认）。来源: `web/static/group_status.js:84-95`、`web/server.py:691-704`
+- **决策**：D9 — 双终态不会因 `status_seq` 相等而被前端丢弃——`applyTerminal` 的守卫是**严格小于**（`seq < state.seq`），因此同 seq 的 `round_ended` 与 `discussion_ended` 都会被应用（本轮确认，可用于 C6 的守卫设计）。来源: `web/static/group_status.js:60-65`
+- **决策**：D10 — `room_state` 新增字段不破坏既有 Web 用例——现有断言是「存在性 + 取值」，不做整字典比较（本轮确认）。来源: `tests/web_tests/test_group_chat_server.py:291-304`
+- **决策**：D11 — `RoundResult` 追加带默认值的新字段不破坏既有构造点——现有构造全部用关键字参数（`room_id=/queued=/termination=/posts=/systems=/slots=/limit=`），dataclass 追加默认值字段安全（本轮确认）。来源: `agent/team/orchestrator.py:334-340,399-407`
+- **决策**：D12 — RIR 满足 `research_tier: full` 的字段门槛（status/reason/research questions/findings/design impact 五段齐全），且「本地参考仓库不可用」已按仓库规则如实记录并给出替代依据（设计已钉死，本轮确认）。来源: `proposal.md:60-80`、`AGENTS.md`「业界调研门禁」
 
 ## Open Questions
 

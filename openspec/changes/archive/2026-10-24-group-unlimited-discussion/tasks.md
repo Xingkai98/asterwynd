@@ -75,9 +75,9 @@
 ## 4. 收尾
 
 - [x] 4.1 `docs/openspec-change-backlog.md` 移除本 change（`backlog_updated` 事件）。
-- [ ] 4.2 归档 move 到 `openspec/changes/archive/2026-10-24-group-unlimited-discussion/`（独立提交，纯 rename）。
-- [ ] 4.3 用归档目录名重建 witnessloop 三份 manifest（grill / grill-adversarial / building）。
-- [ ] 4.4 本地复验：`uv run pytest -q`、`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`、
+- [x] 4.2 归档 move 到 `openspec/changes/archive/2026-10-24-group-unlimited-discussion/`（独立提交，纯 rename）。
+- [x] 4.3 用归档目录名重建 witnessloop 三份 manifest（grill / grill-adversarial / building）。
+- [x] 4.4 本地复验：`uv run pytest -q`、`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`、
   `uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base`。
-- [ ] 4.5 发起 PR；PR 描述写明验证结果与 issue #333 关联。
-- [ ] 4.6 issue #333 追加完成说明并关闭。(post-merge)
+- [x] 4.5 发起 PR；PR 描述写明验证结果与 issue #333 关联。
+- [ ] 4.6 (post-merge) 给 issue #333 追加完成说明并关闭。
