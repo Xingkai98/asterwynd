@@ -1,6 +1,6 @@
 # Design: 群聊 everyone 模式无限讨论链（讨论链 + 停止按钮 + 安全阀）
 
-> 修订记录：v2（2026-10-24）按 `reviews/grill-design.md` 的 C1–C22 修正；四个用户裁决点（Q1–Q4）在 `## Open Questions (pending user ruling)` 登记，裁决后回填 `## User Rulings`。
+> 修订记录：v3（2026-10-24）按 `reviews/grill-design.md` 的 C1–C22 修正，并已落实用户对 Q1–Q4 的裁决（见 `## User Rulings`）；设计已定稿，进入实现。
 
 ## Context
 
@@ -72,7 +72,7 @@
   4. **续轮路径**：同步区只推进到「决定继续 + 置 `closed`」，随后 `await` 发 `round_ended(chain_continues=true)` / review，再进入下一轮；此期间到达的用户消息看到 `current.closed == True` ⇒ 只记 `pending_mentions`（不再往已关闭轮追加 slot），下一轮开局应用。
 - 用户消息在链内的契约（grill C16，Q1 裁决后定稿）：
   - 唯一保证 = **进房间日志 + 行首 `@` 排入当前/下一轮 slot**；SHALL NOT 保证必有成员回合消费它。
-  - 若在成员回合切片构造之后到达（无任何回合看到）→ 记入 `chain.pending_user_seqs`；收敛判定时按 Q1 裁决处理（推荐：**不得以 `converged` 结束**，有余量则强制再开一轮）。
+  - 若在成员回合切片构造之后到达（无任何回合看到）→ 记入 `chain.pending_user_seqs`；按 Q1 用户裁决：存在未消费用户消息时**不得以 `converged` 结束**——安全阀仍有余量则强制再开一轮，否则按对应安全阀 reason 结束（消息保留在房间日志）。
 - 用户消息消费判定：`_run_slot` 内 `view = log.build_injection(...)` 后，把 `view` 覆盖到的最大 `seq` 之前的所有 `pending_user_seqs` 移除（切片构造即视为本轮看到）。
 
 ### Decision 3：轮次推进与续轮判定（同步区算法，钉死）
@@ -104,7 +104,7 @@
         | 8 | 本轮 0 发言 0 失败，且 `pending_user_seqs` 为空 | `converged` | 自然收敛 |
         | 9 | 本轮 0 发言且有失败 | `all_failed` | |
         | 10 | 本轮有发言（`posts` 非空） | `None`（继续） | |
-        | 11 | 本轮 0 发言 0 失败但**有未消费用户消息** | `None`（强制再开一轮，受 5–7 限制） | Q1 推荐口径 |
+        | 11 | 本轮 0 发言 0 失败但**有未消费用户消息** | `None`（强制再开一轮，受 5–7 限制） | Q1 用户裁决（2026-10-24） |
         若 `None` → `chain_continues = True`；否则 `chain_continues = False` 且 `chain.closing = True`，append 链结束 `system`（按 reason 文案表），`_reset_room_statuses` + `_release_round`（**同步**）。
      e. `await` 发 `round_ended`（`chain_id` / `round_index` / `chain_continues` / `termination` / `limit` / `status_seq`；单轮模式 payload 逐字段不变，见 Decision 9）。
      f. `await` review sink `on_round_end`（每轮一次，沿用）。
@@ -136,7 +136,7 @@
   - 轮间续轮判定（Decision 3 的同步区）已含 `stopped` 优先级第 1；
   - 停止请求恰好落在「最后一个 slot 已跑完、尚未进入收尾同步区」→ 同步区仍会读到 `stop_requested`（单线程无竞态）。
 - 停止后：成员状态 reset（同步、先于释放）、房间认领释放、写 `system`、发 `round_ended(stopped)` / `discussion_ended(stopped)`。
-- `single` 模式：按 Q3 推荐 = **收紧**（不提供停止、`request_stop` 返回 `False`、不产生 `stopped`）；若用户裁决放开，则改为"单轮也在当前回合后结束本轮"并在 delta 让「三出口」变「四出口」。
+- `single` 模式：按 Q3 用户裁决（2026-10-24）= **收紧**——不提供停止按钮、`request_stop` 对 `single` 返回 `False`、不产生 `stopped`；单轮保持三出口与零事件变化。
 
 ### Decision 6：安全阀（`team:` 配置节，链启动快照）
 
@@ -150,7 +150,7 @@
 - 判定点：
   - 续轮前（同步区，Decision 3 优先级 5–7）。
   - 轮内：`round_limit = min(轮预算, max_turns - chain.turns)` 截断本轮。
-  - 墙钟检查点：**Q4 推荐 = 每个 slot 之间（`_drive` 循环顶）也检查一次**（不打断在跑回合，仅不再开新回合），最坏越界 ≤ 一个 `turn_timeout`（默认 240s）；若用户裁决只保留轮间检查，则最坏越界 = 本轮剩余 slot × `turn_timeout`（默认 3 人 everyone 屋约 44 分钟，grill C10 量级）。
+  - 墙钟检查点：**Q4 用户裁决（2026-10-24）= 每个 slot 之间（`_drive` 循环顶）也检查一次**（不打断在跑回合，仅不再开新回合），最坏越界 ≤ 一个 `turn_timeout`（默认 240s）；不采用"只在轮间检查"（那会有一整轮、默认配置约 44 分钟的量级越界）。
 - 单轮模式不使用这三个参数。
 
 ### Decision 7：事件契约、`chain_id` 守卫、链内 `system` 可见性、UI 状态
@@ -178,7 +178,7 @@
 - 现状：轮 task 被 cancel（房间 WS 断开 → `web/server.py:748-750`）→ `_run_round` 捕 `CancelledError` → reset + `_schedule_teardown` 尽力发 `round_ended(cancelled)`（`orchestrator.py:408-422`）。
 - 新语义：链内取消 = 结束当前轮 + 结束链。同步区先 reset/置 `closing`（沿用现有次序），后台 teardown 尽力发 `round_ended(termination="cancelled", chain_id, chain_continues=false)` + `discussion_ended(reason="cancelled", chain_id, status_seq)`；不写房间日志、不产生 `RoundResult`。意外异常同理（`reason="error"`，异常仍上抛）。
 - 幂等与身份：沿用 `_schedule_teardown` 的身份/一次发送判断；`chain.closing` 防止重复 `discussion_ended`。
-- **Q2 待裁决**：链生命周期是否仍绑房间 WS（推荐：保持现状 + 链因断线中止时写一条 `system`「讨论因页面断开而中止」，让用户知道原因；若改服务端持有则另立设计）。
+- **Q2 用户裁决（2026-10-24）**：保持现状——链生命周期绑定发起它的房间 WS 连接，断线即取消链；**链因断线中止时 SHALL 在房间日志写一条 `system`「讨论因页面断开而中止」**（区别于单轮取消不写日志）。服务端持有方案不在本 change 范围。
 
 ### Decision 9：兼容性与迁移
 
@@ -217,16 +217,12 @@
 - `asterwynd.example.yaml`：`team:` 配置节示例。
 - `docs/openspec-change-backlog.md`：收尾移除本条目。
 
-## Open Questions (pending user ruling)
+## User Rulings (2026-10-24，用户停轮裁决)
 
-- **Q1**（未消费的用户消息）：见 `reviews/grill-design.md` Q1。推荐口径：**收敛优先让位于"消息必须被看到"**——存在未消费用户消息时不得以 `converged` 结束，有余量则强制再开一轮；安全阀耗尽则按 cap reason 结束（消息留在日志，下一条用户消息开新链时可见）。
-- **Q2**（链生命周期与 WS）：推荐保持现状（房间 WS 断开 = 取消链），并**在链因断线中止时写 `system`「讨论因页面断开而中止」**（单轮取消仍不写日志）。
-- **Q3**（single 是否可停止）：推荐**收紧**——单轮不提供停止按钮、`request_stop` 对 `single` 返回 `False`、不产生 `stopped`。
-- **Q4**（墙钟检查粒度）：推荐**每个 slot 之间也检查**（不打断在跑回合，最坏越界 ≤ 一个 `turn_timeout`）。
-
-## User Rulings (2026-10-24)
-
-（待主 agent 停轮确认后回填 Q1–Q4 的用户答复。）
+- **Q1（未消费的用户消息）**：采用推荐口径——存在未消费用户消息时不得以 `converged` 结束；安全阀仍有余量则强制再开一轮，否则按对应安全阀 reason 结束（消息保留在房间日志）。
+- **Q2（链生命周期与 WS）**：保持现状——房间 WS 断开即取消链；链因断线中止时在房间日志写 `system`「讨论因页面断开而中止」（单轮取消仍不写日志）。
+- **Q3（single 是否可停止）**：收紧——单轮不提供「停止讨论」、`request_stop` 返回 `False`、不产生 `stopped`；单轮保持三出口与零事件变化。
+- **Q4（墙钟检查粒度）**：每个 slot 之间也检查墙钟（不打断在跑回合，仅不再开新回合），最坏越界 ≤ 一个 `turn_timeout`。
 
 ## Pre-Implementation Review
 
