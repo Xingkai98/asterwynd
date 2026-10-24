@@ -82,7 +82,7 @@ Web 端提供 workflow 运行态 DAG 实时图（`web/static/workflow_graph.js`�
 | 实体 | 要点 |
 | --- | --- |
 | `Persona`（roster） | 稳定 id、显示名、角色标签、指令、模型绑定、运行模式 `mode`；roster 级 `mainBotIds`（可多个，即 Chief） |
-| `Room` | 成员、房间级 `admin`（单个、可为空）、**应答模式 `reply_mode`**、群共享 `notice`、`(persona, room) → 群内会话 id` 映射、注入游标 `seen` |
+| `Room` | 成员、房间级 `admin`（单个、可为空）、**应答模式 `reply_mode`**、**讨论模式 `discussion_mode`**、群共享 `notice`、`(persona, room) → 群内会话 id` 映射、注入游标 `seen` |
 | 房间日志 | 权威有序条目 `{seq, speaker, kind, text, ts}`，`kind ∈ {user, post, system}` |
 
 **人设运行模式**（Decision 18）：`Persona.mode` 取 `build` / `read_only` / `plan` / `bypass`（即 `AgentMode`），**缺省 `bypass`**——该人设的单聊与它在所有群里的群内会话都以它构造（`AgentRunConfig(mode=persona.mode)`）。缺省选 `bypass` 的理由：`build` 下高风险工具（如 Bash）需审批，而群内会话按 Decision 9 审批 fail-closed 立即拒 ⇒ 成员在群里根本跑不了高风险工具（「被权限卡死」）；`bypass` 下审批根本不触发，降级也就不再构成阻塞。**roster 是模式的事实来源**：`AgentLoop` 的 resume 分支会用**快照**的 mode 覆盖构造期模式，故构造前会用 roster 值规整快照里的 mode，否则用户改了模式后旧会话会把新值顶回去。
@@ -92,7 +92,9 @@ Web 端提供 workflow 运行态 DAG 实时图（`web/static/workflow_graph.js`�
 - `admin`（缺省）：房间 `admin` → 否则 roster 首个 `mainBot` → 否则成员顺序；
 - `everyone`：全体成员按序各得一次发言机会（**admin 先**），各自可静默。
 
-`everyone` 覆盖成本 = 每条消息 N 次模型调用（每名成员各读一遍上下文切片），故**默认关闭**、可逐房间切换；行首 `@` 在两种模式下都优先（Decision 19 只改「无 `@` 时的默认应答者」）。成员发言**句中**的 `@Name` 追加到**当前位次之后**（去重、非本群成员或自己忽略且不报错）。每轮上限 = 开局 slot 数 + 固定额外轮次（有 admin 再加固定额度），并按成员分别计数封顶；上限按**开局** slot 数计算，轮次中到达的用户消息只追加进房间日志、SHALL NOT 改变上限基数。**轮次终止三出口**：走完 / 达上限（记 `system`）/ 全部剩余成员失败或超时。**房间级互斥**：同一房间同一时刻至多一轮，轮次中到达的用户消息排队进入本轮而不是撞成员会话的 `run_lock`。静默用**哨兵文本** `[PASS]`（解析最终文本，不新增控制工具）。
+`everyone` 覆盖成本 = 每条消息 N 次模型调用（每名成员各读一遍上下文切片），故**默认关闭**、可逐房间切换；行首 `@` 在两种模式下都优先（Decision 19 只改「无 `@` 时的默认应答者」）。成员发言**句中**的 `@Name` 追加到**当前位次之后**（去重、非本群成员或自己忽略且不报错）。每轮上限 = 开局 slot 数 + 固定额外轮次（有 admin 再加固定额度），并按成员分别计数封顶；上限按**开局** slot 数计算，轮次中到达的用户消息只追加进房间日志、SHALL NOT 改变上限基数。**轮次终止三出口**（`discussion_mode = single`）：走完 / 达上限（记 `system`）/ 全部剩余成员失败或超时。**房间级互斥**：同一房间同一时刻至多一轮，轮次中到达的用户消息排队进入本轮而不是撞成员会话的 `run_lock`。静默用**哨兵文本** `[PASS]`（解析最终文本，不新增控制工具）。
+
+**讨论链**（`discussion_mode = unlimited`，仅 `reply_mode = everyone` 合法，见 `group-unlimited-discussion`）：房间认领覆盖整条链；一轮正常结束且有人发言后自动开启下一轮（续轮写 `system`「讨论继续（第 k 轮）」），每轮仍全员各一次、可 `[PASS]`；**某轮 0 发言且无未消费用户消息 = 自然收敛**。链级出口按固定优先级：用户停止（第四出口，当前成员回合跑完后生效）→ 房间无成员 → 模式切回单轮 → 本轮达上限 → 安全阀（`team.discussion_max_rounds/turns/seconds`，缺省 200/600/6000，改配置需重启 Web）→ 收敛 → 全员失败；取消/异常不参与该排序。每轮发 `round_ended`（带 `chain_id` / `round_index` / `chain_continues`），链终态发 `discussion_ended`（带 `reason` 与轮/回合/耗时统计），链内 `system` 条目经 `system_entry` 实时广播；前端按 `chain_id` 归属守卫，`room_state` 的 `discussion_round/discussion_reason` 用于刷新/重连恢复。`single` 模式不发任何 `discussion_*` 事件、`round_ended` 逐字段不变。
 
 **切片注入**（`agent/team/roomlog.py`）：成员持有**持久化游标** `seen[member]`，在**回合开始**推进（含静默/超时回合）——若按「上次发言之后」推进，连续静默的成员切片边界永不前进，同一段内容会被反复注入、上下文随静默次数无界增长。注入切片施加三层上限（首见 12 / 单次增量 24 / 往轮上下文 8），并把「本轮」与「往轮（仅 context）」分开标注。房间日志**保留全部条目**（这是「群时间线唯一权威、重连还原」的前提）。
 
