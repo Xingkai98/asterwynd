@@ -59,10 +59,10 @@
   - `round_index: int`（当前轮 1-based；`rounds_started` 即最后一次进入的轮序号）；`turns: int`（链内已完成成员回合数）；
   - `stop_requested: bool`；`closing: bool`（结束决定已做出，用于身份判断与 `discussion_ended` 一次性发送）；
   - `current: _RoundState`（**认领后到链结束前恒非 `None`**：链认领与第 1 轮骨架在**同一无 await 同步区**建立，grill I1）；轮间窗口靠 `current.closed` 判定；
-  - `pending_mentions: list[str]`（轮间窗口到达的用户行首 `@`；**被某轮开局 slot 消费后立即清空**；链结束随链丢弃，不跨链；
+  - `pending_mentions: list[str]`（轮间窗口到达的用户行首 `@`；**被某轮开局 slot 消费后立即清空**；链结束随链丢弃、不跨链）；
   - `pending_user_seqs: list[int]`（「尚无任何成员回合切片看到」的用户条目 `seq`；**到达即同步写入**，见下）；
   - `limits`（链启动时从 `TeamConfig` 快照的 `max_rounds/max_turns/max_seconds`）。
-- `_RoundState` 增字段：`closed: bool`（本轮收尾同步区置 `True`）；`terminal_sent: bool`（本轮的终态事件已发出，取消/异常 teardown 用它避免同轮重复 `round_ended`，grill L16）。
+- `_RoundState` 增字段：`closed: bool`（本轮收尾同步区置 `True`）；`terminal_sent: bool`（本轮的终态事件已发出；**在发出本轮 `round_ended` 之前置位**，取消/异常 teardown 用它避免同轮重复 `round_ended`，grill L16/N5）。
 - **await 纪律（沿用单轮不变量，grill C1/I1/I6）**：
   1. 链认领与第 1 轮 `_RoundState` 骨架（`start_seq` 先占位、`limit`、slots）在**同一同步区**完成并挂到 `chain.current`；
   2. 每轮收尾的「轮终止判定 → `system` 追加 → `rounds.append`（按 I3 规则）→ 续轮/结束决定」在**无 await 同步区**完成；
@@ -82,7 +82,7 @@
   2. **认领 + 第 1 轮骨架（同一同步区）**：建 `_ChainState`；`start_seq`、`slots = opening_slots(room, opening_text, ...)`、`limit = len(slots)+extra+(admin?admin_extra:0)` 与剩余链额度取 min；建 `_RoundState`；`chain.current = state`；`chain.round_index = 1`；`self._rounds[room.id] = chain`。**查—建—挂 current 之间无任何 await**（grill I1）。
   3. append 用户条目（同步，回填 `state.start_seq` 与 `pending_user_seqs`）；`await user_message`；`unlimited` 下再 `await discussion_started`（payload 钉死：`{room_id, chain_id, discussion_mode, members:[persona_id...], round_index:1, limits:{max_rounds,max_turns,max_seconds}}`，grill I4/L9）。
   4. 循环 `while True`：
-     a. **（k>1）同步建下一轮**：`sys_entry = log.append_system("讨论继续（第 k 轮）")`；`slots = opening_slots(room, "", ...)`（**k>1 SHALL 传空串**，否则开局行首 `@` 会让后续每轮只剩点名者，grill I7）；应用并清空 `pending_mentions`（按顺序插队首、去重、非本群/自己忽略）；`limit = min(轮预算, max_turns - chain.turns)`；建 `_RoundState`；`chain.current = state`；`chain.round_index += 1`。
+     a. **（k>1，先检查 `stop_requested`）同步建下一轮**：若 `stop_requested` 已置位则不 append「讨论继续」、直接进入收尾（grill N12）；否则`sys_entry = log.append_system("讨论继续（第 k 轮）")`；`slots = opening_slots(room, "", ...)`（**k>1 SHALL 传空串**，否则开局行首 `@` 会让后续每轮只剩点名者，grill I7）；应用并清空 `pending_mentions`（按顺序插队首、去重、非本群/自己忽略）；`limit = min(轮预算, max_turns - chain.turns)`；建 `_RoundState`；`chain.current = state`；`chain.round_index += 1`。
      b. `await system_entry`（k>1，payload：`{room_id, chain_id, seq, text}`）。
      c. `await self._drive(chain, state)`：**每个 slot 前后检查** `stop_requested`（跳过剩余 slot）与墙钟（`elapsed >= max_seconds` → 不再开新回合，grill L15/Q4）；`_run_slot(chain, state, persona_id)` 内消费 `pending_user_seqs`（Decision 2）。
      d. **同步收尾区**：`state.closed = True`；轮终止判定：`stop_requested` → `stopped`；`turns >= limit and index < len(slots)` → `limit`（append system「本轮因达上限结束」）；0 发言且有失败 → `all_failed`；否则 `completed`。**仅当 termination ∈ {completed, limit, all_failed} 时 `chain.rounds.append(state)`**（`stopped` 不计入，grill I3）；`chain.turns += state.turns`。链级判定见下表（纯同步快照）。
@@ -104,8 +104,8 @@
      e. `await` review sink `on_round_end`（**保持现状顺序：review 在 `round_ended` 之前**，grill L12；每轮一次）。
      f. `await round_ended`：`unlimited` payload 加 `chain_id` / `round_index` / `chain_continues`；`single` 四键不变。
      g. 若 `unlimited` 且链结束：`await system_entry`（链结束 `system` 条目，若有）→ `await discussion_ended`（`chain_id`、`reason`、`rounds`、`rounds_started=round_index`、`turns`、`elapsed_seconds`、`status_seq`=与最后一次 `round_ended` 相同的 reset 结果，grill L10）。返回 `RoundResult`。
-  5. **single 分支（钉死，grill I2）**：`single` 共用 `_ChainState` 外壳（统一释放/身份语义），但：不执行 `_decide_chain_end`、不写链级 `system`、不发 `discussion_started`/`system_entry`/`discussion_ended`、`round_ended` 不附加 `chain_id`/`round_index`/`chain_continues`；每轮结束即链结束（三出口语义逐字段保持，Decision 10 ③ 用整字典快照与负向断言锁住）。
-- 链 end `system` 文案（钉死）：`converged`「讨论已收敛（本轮全员静默）」；`stopped`「讨论已由用户停止」；`all_failed`「讨论已中止（本轮无人发言，存在失败）」；`round_limit`「讨论因本轮达上限结束」；`max_*`「讨论达安全上限结束」；`mode_changed`「讨论模式已切换为单轮」；断线取消「讨论因页面断开而中止」；`error` 不写；`completed`（无成员）不写（理由：房间/成员已不存在，写日志无意义，grill L3）。
+  5. **single 分支（钉死，grill I2）**：`single` 共用 `_ChainState` 外壳（统一释放/身份语义），但：不执行链级结束判定（Decision 3 表）、不写链级 `system`、不发 `discussion_started`/`system_entry`/`discussion_ended`、`round_ended` 不附加 `chain_id`/`round_index`/`chain_continues`；每轮结束即链结束（三出口语义逐字段保持，Decision 10 ③ 用整字典快照与负向断言锁住）。
+- 链 end `system` 文案（钉死）：`converged`「讨论已收敛（本轮全员静默）」；`stopped`「讨论已由用户停止」；`all_failed`「讨论已中止（本轮无人发言，存在失败）」；`round_limit`「讨论因本轮达上限结束」；`max_*`「讨论达安全上限结束」；`mode_changed`「讨论已结束（模式已变更）」；断线取消「讨论因页面断开而中止」；`error` 不写；`completed`（无成员）不写（理由：房间/成员已不存在，写日志无意义，grill L3）。
 - `rounds` 口径（grill I3）：`rounds` = `len(chain.rounds)`（只含正常收尾的轮）；停止发生在第 3 轮中 ⇒ `rounds=2`、`rounds_started=3`（用例断言精确值）。
 
 ### Decision 4：收敛、提示词与文案
@@ -149,10 +149,11 @@
   - `round_ended` 扩展：`chain_id`、`round_index`、`chain_continues`；`termination` 新增 `stopped`。
 - **`single` 模式**：不发 `discussion_*`/`system_entry`；`round_ended` payload 四键不变（整字典快照断言）。
 - **链身份守卫**：`round_ended` / `system_entry` / `discussion_stop_requested` / `discussion_ended` 都带 `chain_id`；`group.js` 维护 `state.chainId`，只应用与之一致的事件。守卫纯函数签名钉死：`shouldApplyChainEvent(currentChainId, data)`（grill L4）；`discussion_ended` 由 `chain.closing` 保证每链至多一次。
-- `room_state` 快照：`room` 对象带 `discussion_mode`；新增 `discussion_round`（当前链已进入轮序号，1-based，无链 0）与 `discussion_reason`（最近一次链结束原因）。宿主：编排器 `self._discussion_state: dict[room_id, dict]`，由 `discussion_round/2` 与结束原因更新，读取方法 `discussion_snapshot(room_id) -> {"round": int, "reason": str|None}`（grill I8）。
+- `room_state` 快照：`room` 对象带 `discussion_mode`；新增 `discussion_round`（当前链已进入轮序号，1-based；无链与 `single` 恒 0）与 `discussion_reason`（最近一次链结束原因）。宿主：编排器 `self._discussion_state: dict[room_id, {"round": int, "reason": str|None}]`——进入第 k 轮时更新 `round=k`，链释放时置 `round=0` 并写 `reason`；读取方法 `discussion_snapshot(room_id)`（grill I8/N2）。
 - 前端（`group.js` + `group_status.js`）：
   - 纯函数（`group_status.js` 导出、`test_group_status_js.py` 同形测试）：`describeRoundEnd(data)`、`describeDiscussionEnd(reason)`、`shouldShowStop(snapshot)`、`shouldApplyChainEvent(currentChainId, data)`。
-  - `room_state` 分支：`discussion_round > 0` → 显示「讨论中（第 k 轮）」；否则若 `discussion_reason` 非空 → 显示对应终态文案；刷新/重连据此恢复（grill I8）。
+  - `room_state` 分支：`round_active && room.discussion_mode === "unlimited" && discussion_round > 0` → 显示「讨论中（第 k 轮）」；否则若 `discussion_reason` 非空 → 显示对应终态文案（`single` 不做该恢复，`discussion_round` 恒 0）；刷新/重连据此恢复（grill I8/N6）。
+  - `round_ended(termination="stopped")` 的文案 SHALL 为「讨论已停止」（不得显示「本轮结束」；随后 `discussion_ended(stopped)` 覆盖为同一文案，grill N10）。
   - 状态文案映射同 delta；`chain_continues=true` 时**不**显示「本轮结束」。
   - 停止按钮：`round_active && room.discussion_mode==="unlimited"` 可见；点击发 WS `stop_discussion`（WS 未连 → REST），置灰「正在停止…」，`discussion_ended` 后恢复。
   - `system_entry` 实时 append 时间线（按 `seq` 去重）。
