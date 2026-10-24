@@ -2,7 +2,7 @@
 
 ### Requirement: 群聊讨论链安全阀可配置
 
-系统 SHALL 允许通过 `asterwynd.yaml` 的 `team:` 配置节配置群聊讨论链的安全阀：`discussion_max_rounds`（正整数，缺省 200）、`discussion_max_turns`（正整数，缺省 600）、`discussion_max_seconds`（正数，缺省 6000）。缺失配置时 SHALL 使用缺省值；`0`、负数、非数值、以及 YAML 布尔值（`true`/`false`）SHALL 视为非法，在配置加载阶段 fail fast，抛出可读 `ConfigError` 并拒绝启动。这三个参数 SHALL 只作用于 `discussion_mode = unlimited` 的讨论链，SHALL NOT 改变 `discussion_mode = single` 模式的轮次预算（后者沿用既有 `extra_turns` / `admin_extra_turns` / `turns_each` / `admin_turns_each`）。配置在 Web 进程启动时一次性解析并注入编排器；链启动时快照，运行中修改配置文件 SHALL NOT 影响已启动的链或未重启的进程。
+系统 SHALL 允许通过 `asterwynd.yaml` 的 `team:` 配置节配置群聊讨论链的安全阀：`discussion_max_rounds`（正整数，缺省 200）、`discussion_max_turns`（正整数，缺省 600）、`discussion_max_seconds`（正数，缺省 6000）。缺失配置时 SHALL 使用缺省值；`0`、负数、非数值、以及 YAML 布尔值（`true`/`false`）SHALL 视为非法，在配置加载阶段 fail fast，抛出可读 `ConfigError` 并拒绝启动。这三个参数 SHALL 只作用于 `discussion_mode = unlimited` 的讨论链，SHALL NOT 改变 `discussion_mode = single` 模式的轮次预算（后者沿用既有 `extra_turns` / `admin_extra_turns` / `turns_each` / `admin_turns_each`）。配置在 Web 进程启动期一次性解析；编排器在 workspace 首次懒构造时注入并缓存。链启动时快照，运行中修改配置文件 SHALL NOT 影响已启动的链或未重启的进程。
 
 #### Scenario: 缺省值
 

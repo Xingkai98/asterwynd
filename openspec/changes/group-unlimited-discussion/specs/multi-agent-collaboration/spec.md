@@ -87,7 +87,7 @@
 
 ### Requirement: 讨论链自动续轮与收敛
 
-在 `discussion_mode = unlimited` 且 `reply_mode = everyone` 的房间中，一轮正常结束（`termination = "completed"`）且本轮有成员发言时，系统 SHALL 自动开启下一轮，SHALL NOT 等待用户再次发言；每轮 SHALL 由全体成员按序各得一次发言机会（admin 先），成员 SHALL 可静默（`[PASS]`）。整条讨论链 SHALL 在以下出口之一结束（按钉死的优先级判定，同一时刻多个条件成立时取优先级高者）：① `stopped`（用户请求停止）；② `completed`（房间已无成员，退化为单轮语义）；③ `mode_changed`（链中房间的 `discussion_mode` 被改回 `single` 或 `reply_mode` 不再是 `everyone`）；④ `round_limit`（当前轮达本轮预算、链不再续）；⑤ `max_rounds`；⑥ `max_turns`；⑦ `max_seconds`；⑧ `converged`（本轮 0 条成员发言且 0 次失败，且无未消费用户消息）；⑨ `all_failed`（本轮 0 条成员发言且存在失败/超时）；⑩ 取消/意外异常（`cancelled` / `error`）。链结束时系统 SHALL 在房间日志写一条对应原因的 `system` 条目（取消/异常与"房间已无成员"退化路径除外），并 SHALL 发布 `discussion_ended` 事件，携带 `chain_id`、`reason`、已完成轮数 `rounds`、进入轮数 `rounds_started`、总成员回合数 `turns`、耗时 `elapsed_seconds` 与 `status_seq`；`discussion_ended` 每条链 SHALL 至多发布一次。每轮结束 SHALL 发布 `round_ended`，携带 `chain_id`、链内轮次序号 `round_index` 与是否续轮 `chain_continues`；链内新增的 `system` 条目（续轮 / 收敛 / 停止 / 达上限 / 模式切换）SHALL 通过 `system_entry` 事件实时发布，携带 `chain_id`、`seq` 与 `text`。续轮前 SHALL 在房间日志记录 `system` 条目「讨论继续（第 k 轮）」，其 `seq` 作为该轮的 `start_seq`。**未消费用户消息**：链内到达、但在所有成员回合的切片构造之后才到达的用户消息 SHALL 记入待消费集合；存在未消费用户消息时，链 SHALL NOT 以 `converged` 结束——若安全阀仍有余量则 SHALL 强制再开一轮，否则按对应安全阀 reason 结束（消息保留在房间日志）。**待应用点名** SHALL 在某轮开局 slot 消费后立即清空，链结束随链丢弃、SHALL NOT 跨链。安全阀取值 SHALL 来自配置的 `team.discussion_max_rounds`（缺省 200）、`team.discussion_max_turns`（缺省 600）、`team.discussion_max_seconds`（缺省 6000），并 SHALL 在链启动时快照；链内成员回合总数 SHALL NOT 超过 `max_turns`，每轮上限 SHALL 取「本轮 slot 预算」与「链剩余回合额度」的较小者。系统 SHALL NOT 为"是否继续讨论"额外调用模型判定；收敛判定 SHALL 只基于本轮实际发言条数、失败条数与未消费用户消息。`discussion_mode = single` 的房间 SHALL NOT 触发本 Requirement 的任何行为。
+在 `discussion_mode = unlimited` 且 `reply_mode = everyone` 的房间中，一轮正常结束（`termination = "completed"`）且本轮有成员发言时，系统 SHALL 自动开启下一轮，SHALL NOT 等待用户再次发言；每轮 SHALL 由全体成员按序各得一次发言机会（admin 先），成员 SHALL 可静默（`[PASS]`）。链启动时系统 SHALL 发布 `discussion_started`；用户请求停止讨论时 SHALL 发布 `discussion_stop_requested`。整条讨论链 SHALL 在以下快照出口之一结束（按钉死的优先级判定，同一时刻多个条件成立时取优先级高者）：① `stopped`（用户请求停止）；② `completed`（房间已无成员，退化为单轮语义）；③ `mode_changed`（链中房间的 `discussion_mode` 被改回 `single` 或 `reply_mode` 不再是 `everyone`）；④ `round_limit`（当前轮达本轮预算、链不再续）；⑤ `max_rounds`；⑥ `max_turns`；⑦ `max_seconds`；⑧ `converged`（本轮 0 条成员发言且 0 次失败，且无未消费用户消息）；⑨ `all_failed`（本轮 0 条成员发言且存在失败/超时）。**取消与意外异常（`reason = cancelled / error`）SHALL 优先于上述一切快照条件、不参与该优先级排序**。链结束时系统 SHALL 在房间日志写一条对应原因的 `system` 条目（取消/异常与"房间已无成员"退化路径除外），并 SHALL 发布 `discussion_ended` 事件，携带 `chain_id`、`reason`、已完成轮数 `rounds`、进入轮数 `rounds_started`、总成员回合数 `turns`、耗时 `elapsed_seconds` 与 `status_seq`；`rounds` SHALL 只统计**正常收尾**的轮（被用户停止打断的当前轮不计入，`rounds_started` 表达进入轮数）；`discussion_ended` 每条链 SHALL 至多发布一次。每轮结束 SHALL 发布 `round_ended`，携带 `chain_id`、链内轮次序号 `round_index` 与是否续轮 `chain_continues`；链内新增的 `system` 条目（续轮 / 收敛 / 停止 / 达上限 / 模式切换）SHALL 通过 `system_entry` 事件实时发布，携带 `chain_id`、`seq` 与 `text`。续轮前 SHALL 在房间日志记录 `system` 条目「讨论继续（第 k 轮）」，其 `seq` 作为该轮的 `start_seq`。**未消费用户消息**：链内到达、但在所有成员回合的切片构造之后才到达的用户消息 SHALL 记入待消费集合；存在未消费用户消息时，链 SHALL NOT 以 `converged` 结束——若安全阀仍有余量则 SHALL 强制再开一轮，否则按对应安全阀 reason 结束（消息保留在房间日志）。**待应用点名** SHALL 在某轮开局 slot 消费后立即清空，链结束随链丢弃、SHALL NOT 跨链。安全阀取值 SHALL 来自配置的 `team.discussion_max_rounds`（缺省 200）、`team.discussion_max_turns`（缺省 600）、`team.discussion_max_seconds`（缺省 6000），并 SHALL 在链启动时快照；链内成员回合总数 SHALL NOT 超过 `max_turns`，每轮上限 SHALL 取「本轮 slot 预算」与「链剩余回合额度」的较小者。系统 SHALL NOT 为"是否继续讨论"额外调用模型判定；收敛判定 SHALL 只基于本轮实际发言条数、失败条数与未消费用户消息。`discussion_mode = single` 的房间 SHALL NOT 触发本 Requirement 的任何行为。
 
 #### Scenario: 有发言则自动续轮
 
@@ -125,6 +125,13 @@
 - **THEN** 系统 SHALL 结束整条链（`reason = "max_rounds"`）
 - **AND** 房间日志 SHALL 记录 `system`「讨论达安全上限结束」
 
+#### Scenario: 安全阀回合总额度恰好耗尽（`max_turns`）
+
+- **GIVEN** `team.discussion_max_turns = 6`，3 人 everyone 房无 `@` 接力（每轮恰 3 回合）
+- **WHEN** 第 2 轮正常走完 3 名成员（链内累计 6 回合）
+- **THEN** 系统 SHALL 以 `reason = "max_turns"` 结束整条链
+- **AND** 房间日志 SHALL 记录 `system`「讨论达安全上限结束」
+
 #### Scenario: 安全阀回合额度截断当前轮
 
 - **GIVEN** 一条链的剩余回合额度小于某轮 slot 预算
@@ -138,6 +145,7 @@
 - **WHEN** 某个成员回合结束、下一成员回合尚未开始
 - **THEN** 系统 SHALL 不再开启新回合，并以 `reason = "max_seconds"` 结束整条链
 - **AND** SHALL NOT 打断正在运行的成员回合
+- **AND** 越界上界 SHALL ≤ 一个 `turn_timeout`（该值可配置且无硬上界，SHALL NOT 把 `max_seconds` 当硬上限验收）
 
 #### Scenario: 讨论中插话不打断续轮
 
@@ -165,7 +173,7 @@
 
 - **GIVEN** 一个 `discussion_mode = unlimited` 但没有任何成员的房间
 - **WHEN** 用户发送消息
-- **THEN** 系统 SHALL 按单轮语义结束（`round_ended(termination = "completed")`），SHALL NOT 发布 `discussion_started` / `discussion_ended`
+- **THEN** 系统 SHALL 按单轮语义结束（`round_ended(termination = "completed")`，该事件 SHALL NOT 携带 `chain_id` / `round_index` / `chain_continues`），SHALL NOT 发布 `discussion_started` / `discussion_ended`
 - **AND** 房间日志 SHALL NOT 记录「讨论已收敛」
 
 #### Scenario: 单轮模式不触发讨论链

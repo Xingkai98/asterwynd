@@ -9,8 +9,8 @@
 
 - [x] 0.1 用 `grilling` 同等标准（独立零记忆 subagent）执行设计追问，产出 `reviews/grill-design.md`
   （12 条 Confirmed Decisions、4 条 Open Questions、22 条 Design Corrections；`## User Confirmation` 已回填）。
-- [x] 0.2 逐项落实 grill 的 C1–C22，回写 `design.md`（v2）。
-- [ ] 0.3 设计阶段对抗闭环 → `reviews/grill-adversarial.md`，按有界批次模型收敛到 `PASS`。
+- [x] 0.2 逐项落实 grill 的 C1–C22，回写 `design.md`。
+- [ ] 0.3 设计阶段对抗闭环 → `reviews/grill-adversarial.md`：r1 = CHANGES_REQUESTED（批次 I 12 条已全修，design v4）；r2 只做修复验证，`PASS` 后方可写码。
 - [x] 0.4 停轮确认：4 个 Open Questions（每条配具体例子）已抛给用户，答复写入
   `reviews/grill-design.md` 的 `## User Confirmation` 与 `design.md` 的 `## User Rulings`（Q1 不收敛 / Q2 保持现状+日志 / Q3 单轮不停止 / Q4 slot 间检查）。
 - [ ] 0.5 回填 `design.md` 的 `## Pre-Implementation Review`（grill 决策、对抗轮次、修复项、出口）。
@@ -25,7 +25,7 @@
   - 用户插话：链中进日志 + 行首 `@` 插当前轮；轮间窗口进 `pending_mentions` 并在下一轮生效；
   - 停止：成员回合进行中请求 → 回合完成后结束当前轮、剩余 slot 不跑；`round_ended(stopped)` +
     `discussion_ended(stopped)` + system 日志；重复停止/无链 no-op；
-  - 安全阀：`max_rounds` / `max_turns`（经 `round_limit` 截断）/ `max_seconds`（clock 注入）三路；
+  - 安全阀四路各自期望值：`max_rounds`；`max_turns`（额度在轮末恰好耗尽）；`max_seconds`（clock 注入 + slot 间检查）；`round_limit`（`extra_turns=0` 截断当前轮）。
   - 链中把 `discussion_mode` 改回 `single` → 本轮后 `mode_changed`；
   - 取消（`CancelledError`）→ `round_ended(cancelled)` + `discussion_ended(cancelled)` + 状态 reset；
   - 链结束释放房间认领、`is_round_active` 语义、review sink 每轮 `on_round_end`；
@@ -33,11 +33,12 @@
   - 未消费用户消息：回合切片构造后到达且本轮 0 发言 → 不收敛、强制再开一轮；安全阀耗尽则按 cap reason；
   - 收尾同步区竞态（gate 卡在最后一个 slot 结束后）：停止/取消/新消息三路断言；
   - review sink 抛异常不中断链；`chain_id` 单调递增；`rounds`/`rounds_started`/`turns`/`elapsed_seconds` 精确值；
-  - 控制台断言 `single` 房 `request_stop=False`、不产生 `stopped`、无 `discussion_*`/`system_entry` 事件。
+  - 控制台断言 `single` 房 `request_stop=False`、不产生 `stopped`、无 `discussion_*`/`system_entry` 事件；
+  - 链中 `delete_room` → 收尾 `completed` 且不复活日志；可挂起 emit sink 覆盖首轮骨架窗口（grill I1）。
 - [ ] 1.4 扩展 `tests/web_tests/test_group_chat_server.py` / `test_group_chat_team.py`：
   - 房间 create/patch 校验（`unlimited`+`admin` → 400 `discussion_mode_requires_everyone`；
     改 `reply_mode` 冲突 → 400；非法值 → 400 `invalid_discussion_mode`）；
-  - `room_state` 字段 `discussion_mode` / `discussion_active` / `discussion_round`；
+  - `room_state`：`room.discussion_mode` + `discussion_round` + `discussion_reason`（**不新增 `discussion_active`**）；
   - REST stop 幂等 + 跨 workspace 回落；WS `stop_discussion` 生效；事件顺序
     `discussion_started → member_* → discussion_stop_requested → round_ended(stopped) → discussion_ended(stopped)`；
     单轮房间事件流与现状一致。
@@ -51,7 +52,8 @@
 - [ ] 2.1 `agent/team/models.py`：`DISCUSSION_MODES`、`Room.discussion_mode`、`to_dict/from_dict`。
 - [ ] 2.2 `agent/config.py`：`TeamConfig` 三参数 + `_parse_team_config` 解析校验；`asterwynd.example.yaml` `team:` 示例。
 - [ ] 2.3 `agent/team/orchestrator.py`：`_ChainState` + `_run_discussion` 循环 + `_drive(chain, state)` +
-  停止请求/续轮判定/安全阀/链 teardown；`RoundResult` 扩展字段；`unlimited` 提示词增强。
+  `_run_slot(chain, state, pid)` 签名 + 停止请求/续轮判定/安全阀/链 teardown + `clock` 注入；
+  `RoundResult` 扩展字段；`unlimited` 提示词增强。
 - [ ] 2.4 `web/team.py`：`TeamService.stop_discussion`、房间 create/update 校验、`discussion_*` 状态透出。
 - [ ] 2.5 `web/server.py`：REST stop 端点、房间 WS `stop_discussion` 消息、`room_state` 扩展。
 - [ ] 2.6 `web/static/group.js` + `index.html` + `style.css`：讨论模式设置、停止按钮、状态文案、
