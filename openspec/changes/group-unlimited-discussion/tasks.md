@@ -28,15 +28,23 @@
   - 安全阀：`max_rounds` / `max_turns`（经 `round_limit` 截断）/ `max_seconds`（clock 注入）三路；
   - 链中把 `discussion_mode` 改回 `single` → 本轮后 `mode_changed`；
   - 取消（`CancelledError`）→ `round_ended(cancelled)` + `discussion_ended(cancelled)` + 状态 reset；
-  - 链结束释放房间认领、`is_round_active` 语义、review sink 每轮 `on_round_end`。
+  - 链结束释放房间认领、`is_round_active` 语义、review sink 每轮 `on_round_end`；
+  - 空成员房间 unlimited → 退化单轮、无 `discussion_*`；`round_limit` 路径（`extra_turns=0` 注入）；
+  - 未消费用户消息：回合切片构造后到达且本轮 0 发言 → 不收敛、强制再开一轮；安全阀耗尽则按 cap reason；
+  - 收尾同步区竞态（gate 卡在最后一个 slot 结束后）：停止/取消/新消息三路断言；
+  - review sink 抛异常不中断链；`chain_id` 单调递增；`rounds`/`rounds_started`/`turns`/`elapsed_seconds` 精确值；
+  - 控制台断言 `single` 房 `request_stop=False`、不产生 `stopped`、无 `discussion_*`/`system_entry` 事件。
 - [ ] 1.4 扩展 `tests/web_tests/test_group_chat_server.py` / `test_group_chat_team.py`：
   - 房间 create/patch 校验（`unlimited`+`admin` → 400 `discussion_mode_requires_everyone`；
     改 `reply_mode` 冲突 → 400；非法值 → 400 `invalid_discussion_mode`）；
   - `room_state` 字段 `discussion_mode` / `discussion_active` / `discussion_round`；
-  - REST stop 幂等；WS `stop_discussion` 生效；事件顺序 `discussion_started → … → round_ended →
-    (discussion_stop_requested) → discussion_ended`；单轮房间事件流与现状一致。
-- [ ] 1.5 前端测试：设置下拉仅 everyone 可选 unlimited、停止按钮可见性/置灰/恢复、状态文案映射
-  （`tests/web_tests/test_group_status_js.py` 同形 + 现有浏览器测试模式）。
+  - REST stop 幂等 + 跨 workspace 回落；WS `stop_discussion` 生效；事件顺序
+    `discussion_started → member_* → discussion_stop_requested → round_ended(stopped) → discussion_ended(stopped)`；
+    单轮房间事件流与现状一致。
+- [ ] 1.5 前端测试：`group_status.js` 新增纯函数 `describeRoundEnd` / `describeDiscussionEnd` /
+  `shouldShowStop` / `shouldApplyChainEvent`（chain_id 守卫）的 JS 用例（`test_group_status_js.py` 同形）；
+  设置下拉仅 everyone 可选 unlimited（disabled）；停止按钮可见性/置灰/恢复；`system_entry` 追加时间线；
+  390px 头部不溢出（现有浏览器测试模式）。
 
 ## 2. 实现
 

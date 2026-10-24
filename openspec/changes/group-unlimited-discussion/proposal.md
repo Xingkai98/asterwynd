@@ -22,9 +22,9 @@
 - **停止讨论**：房间 WS 消息 `stop_discussion` + REST 端点；语义为**优雅停止**——当前成员回合跑完后结束当前轮、不再续轮；无活动讨论时幂等 no-op。
 - **用户插话不打断**：讨论链进行中用户发消息照旧进房间日志、行首 `@` 插到当前位次之后，讨论链继续。
 - **安全阀参数**（`asterwynd.yaml` 的 `team:` 节，可配置）：讨论链最大轮数、最大成员回合数、最大墙钟秒数；默认取用户拍板的 10 倍档（200 轮 / 600 回合 / 6000 秒）。任一到达即停止并写 `system`。
-- **事件契约**：`round_ended` 增加 `round_index` / `chain_continues` / 新终止值 `stopped`；新增 `discussion_started` / `discussion_stop_requested` / `discussion_ended`（携带结束原因、总轮数、总回合、耗时）。
+- **事件契约**：`round_ended` 增加 `chain_id` / `round_index` / `chain_continues` / 新终止值 `stopped`；新增 `discussion_started` / `system_entry`（链内 `system` 条目实时广播）/ `discussion_stop_requested` / `discussion_ended`（携带 `chain_id`、结束原因、已完成轮数、进入轮数、总回合、耗时；每链至多一次）。
 - **Web UI**：房间设置增加「讨论模式」下拉（仅 everyone 可选 unlimited）；房间工具栏增加「停止讨论」按钮；状态文案区分「讨论中（第 k 轮）/ 讨论已收敛 / 讨论已停止 / 讨论达安全上限」。
-- **规格同步**：MODIFIED `multi-agent-collaboration` 的「房间级互斥与轮次终止」与「房间应答模式」；ADDED/ MODIFIED `web-ui` 的交互与事件契约；MODIFIED `configuration` 的 team 运行参数。
+- **规格同步**：MODIFIED `multi-agent-collaboration` 的「房间级互斥与轮次终止」与「房间应答模式」；MODIFIED `web-ui` 的「人设与房间的管理入口」+ ADDED「群聊讨论链状态与停止讨论控件」；ADDED `configuration` 的「群聊讨论链安全阀可配置」（当前 `configuration` 规格没有任何 `team:` 运行参数 Requirement，不能写 MODIFIED）。
 - **兼容性**：`discussion_mode` 缺省 `single`，旧房间记录、既有规格与既有测试行为不变。
 
 ## Capabilities
@@ -71,7 +71,8 @@ research questions:
 findings:
 - **参照实现对照**：DS Bot 的群聊轮次由 `ds-bot/src/host/groups.js` 驱动，本轮既有研究记录其允许成员自行开轮次、上限 `ROOM_BOT_ROUNDS = 3`（见 `openspec/changes/archive/2026-10-13-web-agent-group-chat/design.md:131` 与同 change 的 `reviews/grill-adversarial.md` Issue 12：原引用 `ds-bot/src/host/constants.js:53-54`，constants 里有注释「Rounds Bots may start in one group by posting, before the user speaks there again」）。**本轮复核（2026-10-24）用 GitHub API 读取上游 `Fei2411/DeepSeek-Bot` 当前 HEAD**：`ds-bot/src/host/constants.js` 已无 `ROOM_BOT_ROUNDS`（同位置现为 `ROOM_MODES` / `ROOM_NAME_MAX` / `ROOM_NOTICE_MAX`），代码搜索 `ROOM_BOT_ROUNDS repo:Fei2411/DeepSeek-Bot` 返回 0 命中，`groups.js` 中只剩建群 kickoff 轮次（`round.kickoff`，`:245,433,752`），即上游已演进出不同的轮次模型。⇒ 参照证据按**历史引用**（归档 design / grill-adversarial 的原始行号与注释）采信，不按当前上游 HEAD 声称"照着抄"；本 change 不复制其实现，只确认"成员自行续轮"在同类实现中确有先例，且本仓首版是**更保守的有意分歧**。
 - **本地参考仓库**：`.dev/reference-repos.txt` 在当前工作区不存在（`docs` 规定的本地参考仓库路径未配置），`ds-bot` 本地克隆不可用。按仓库规则如实记录该不可用事实，替代依据 = GitHub API 读取的上游源码 + 归档 change 内的历史引用行号。
-- **业界框架的终止实践**：AutoGen AgentChat 把自动讨论的终止做成**显式终止条件**（`MaxMessageTermination`（消息数上限）、`TextMentionTermination`、`TimeoutTermination`、`ExternalTermination`（外部停止）等，可组合），而不是任其自循环；参见 [autogen_agentchat.conditions](https://microsoft.github.io/autogen/stable/reference/python/autogen_agentchat.conditions.html) 与 [AutoGen Termination 教程](https://microsoft.github.io/autogen/0.4.1/user-guide/agentchat-user-guide/tutorial/termination.html)。同类多 agent 群聊实现也普遍是「显式上限 + 外部终止信号」组合（如 [swarms GroupChat](https://pypi.org/project/swarms/15.0.2/)）。
+- **业界框架的终止实践**：AutoGen AgentChat 把自动讨论的终止做成**显式终止条件**（`MaxMessageTermination`（消息数上限）、`TextMentionTermination`、`TimeoutTermination`、`ExternalTermination`（外部停止）等，可组合），而不是任其自循环；参见 [autogen_agentchat.conditions](https://microsoft.github.io/autogen/stable/reference/python/autogen_agentchat.conditions.html) 与 [AutoGen Termination 教程](https://microsoft.github.io/autogen/0.4.1/user-guide/agentchat-user-guide/tutorial/termination.html)。同类多 agent 群聊实现也普遍是「显式上限 + 外部终止信号」组合（如 [swarms GroupChat](https://pypi.org/project/swarms/15.0.2/)）。**外推边界（如实声明）**：AutoGen 是"消息数上限"单档；本设计是 rounds / turns / seconds 三档，且 `max_turns` 与 `max_rounds` 在 3~5 人 everyone 房下**并不独立**（每轮 = 成员数回合，通常 turns 档先触发，见 design Decision 6）——因此只借"显式终止条件组合"这一形态，不把 AutoGen 的档位设计当作本设计的依据。
+- **上游结论的可复核性（如实声明）**：`ROOM_BOT_ROUNDS` 已从上游当前 HEAD 消失这一结论，来自 2026-10-24 用 GitHub API 读取 `Fei2411/DeepSeek-Bot` 的源码（`constants.js` / `groups.js` + code search 0 命中），**无法从本仓内复核**；归档 change 的行号引用属历史引用。因此本 change 只在"同类实现确有成员自行续轮先例、本仓首版为更保守的有意分歧"这一层采信，不依赖上游现状细节。
 - **本仓既有契约**（代码调研，非泛读）：槽位序列与 `@` 接力（`agent/team/orchestrator.py:153-192,731-769`）、`[PASS]` 静默哨兵（`:501-504`）、房间级互斥与三出口（`:315-341,347-434`）、成员状态表（`:559-599`）、事件经房间总线转发（`web/server.py:663-750`）、配置注入（`web/team.py:200-209`）。这些是讨论链必须保留的外壳；本 change 只扩展"链在轮之上"。
 
 design impact:

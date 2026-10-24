@@ -1,5 +1,7 @@
 # Design: 群聊 everyone 模式无限讨论链（讨论链 + 停止按钮 + 安全阀）
 
+> 修订记录：v2（2026-10-24）按 `reviews/grill-design.md` 的 C1–C22 修正；四个用户裁决点（Q1–Q4）在 `## Open Questions (pending user ruling)` 登记，裁决后回填 `## User Rulings`。
+
 ## Context
 
 当前群聊的轮次语义全部钉死在「一次用户消息 = 一轮」：
@@ -9,7 +11,7 @@
 | 唯一开轮入口是用户消息 | `agent/team/orchestrator.py:315-341` `submit_user_message`；`_rounds` 空闲才开轮 |
 | 一轮 = 走完 slot 序列即结束 | `:347-407` `_run_round`；`:428-434` `_drive` |
 | `everyone` 无 `@` 时开局 slot = 全体成员各一次 | `:153-182` `opening_slots` |
-| 房间互斥只覆盖单轮 | `:309-310` `is_round_active`；`web/server.py:729-738` 轮次在后台 task 里跑 |
+| 房间互斥只覆盖单轮；且「`_drive` 返回 → 释放认领」是**无 await 同步区** | `:309-310`、`:369-385`（既有并发用例依赖此不变量） |
 | 规格明确「用户再发言前不得自行开新一轮」 | `openspec/specs/multi-agent-collaboration/spec.md:1304,1311` |
 | 首版刻意不允许成员自开轮次 | `openspec/changes/archive/2026-10-13-web-agent-group-chat/design.md:131`（参照实现允许、上限 3） |
 
@@ -19,167 +21,213 @@
 
 **Goals**
 
-- 房间级 `discussion_mode`（`single` 默认 / `unlimited`），仅 `everyone` 合法；单轮模式行为与事件**完全不变**。
-- 讨论链：`unlimited` 下一轮正常结束后自动续下一轮；每成员每轮各得一次机会、可 `[PASS]`；**0 条成员发言即收敛结束**。
-- 「停止讨论」：优雅停止（当前成员回合跑完后结束当前轮、不再续轮），幂等；REST + WS 双通道。
+- 房间级 `discussion_mode`（`single` 默认 / `unlimited`），仅 `everyone` 合法；单轮模式行为与事件**逐字段不变**。
+- 讨论链：`unlimited` 下一轮正常结束后自动续下一轮；每成员每轮各得一次机会、可 `[PASS]`；**0 条成员发言且无未消费用户消息 = 收敛**。
+- 「停止讨论」：优雅停止（当前成员回合跑完后结束当前轮、不再续轮），幂等；REST + WS 双通道，workspace 回退口径与发消息一致。
 - 安全阀：轮数 / 成员回合 / 墙钟三档，来自 `team:` 配置节；任一到达即停并写 `system`。
-- 用户插话不打断讨论链；`@` 语义沿用（进日志 + 插当前位次后）。
-- 事件与状态可区分「一轮结束」与「整条讨论结束」。
+- 用户插话不打断讨论链；`@` 语义沿用（进日志 + 插当前位次 / 下一轮开局）。
+- 事件带 `chain_id`，轮终态与链终态可区分、可防交错；链内 `system` 条目实时可见。
 
 **Non-Goals**
 
 - 不做 `admin` 模式的无限轮（`unlimited` + `admin` 为非法配置）。
-- 不做成员真正并发发言（仍串行，沿用现状）。
-- 不做"成员自行决定要不要开下一轮"的二次 LLM 判定（用全员静默 + 安全阀 + 用户停止三出口，不额外付费一次判定调用）。
+- 不做成员真正并发发言（仍串行）。
+- 不做"成员自行决定要不要开下一轮"的二次 LLM 判定。
 - 不改成员会话 / 记忆 review / 上下文切片游标语义；不改单轮模式的任何事件与返回值。
-- 不做跨房间讨论、不做动态成员加入讨论链（讨论链内成员被移出仍按现有 `left` 跳过）。
-- 不引入新依赖、不改协议层以外的传输（房间 WS 仍是唯一实时通道）。
+- 不做跨房间讨论、不做动态成员加入讨论链（链内被移出仍按 `left` 跳过）。
+- 不引入新依赖；房间 WS 仍是唯一实时通道。
 
-## Decision 1：`Room.discussion_mode` 的取值、校验与持久化
+## 数据与配置模型
 
-- 模型：`Room.discussion_mode: str = "single"`；取值集合 `("single", "unlimited")`；`to_dict`/`from_dict` 成对写入；**旧房间 JSON 缺字段 → `single`**（向后兼容）。
-- 有效性：`unlimited` 仅在 `reply_mode == "everyone"` 时合法。
-  - 创建/更新房间时按**合并后的生效值**校验：若 `discussion_mode == "unlimited"` 且 `reply_mode != "everyone"` → REST `400 {"error": "discussion_mode_requires_everyone"}`。
-  - 把 `reply_mode` 从 `everyone` 改为 `admin` 时若 `discussion_mode` 仍为 `unlimited` 且本次未同时给出 `single` → 同样 400（不静默改写用户数据）。
-  - 两个字段本身非法值（不在枚举内）→ 400 `{"error": "invalid_discussion_mode"}`（与既有 `invalid_reply_mode` 同形）。
-- 理由：`admin` 模式下"无限轮"= 单个 admin 反复自答，无讨论价值且纯增成本；用配置非法直接拒绝，比"静默忽略/自动回退"更可测、更不易误解。
+### Decision 1：`Room.discussion_mode` 与 API 白名单
 
-## Decision 2：讨论链（discussion chain）与房间互斥
+- `Room.discussion_mode: str = "single"`；取值 `("single", "unlimited")`；`to_dict`/`from_dict` 成对写入，缺字段按 `single`（先例：`reply_mode` 的 `agent/team/models.py:134-147`）。
+- 校验（创建与更新房间，按**合并后的生效值**）：
+  - 非法值 → `400 {"error": "invalid_discussion_mode"}`（同 `invalid_reply_mode` 形态）。
+  - `discussion_mode == "unlimited"` 且 `reply_mode != "everyone"` → `400 {"error": "discussion_mode_requires_everyone"}`。
+  - 只把 `reply_mode` 改成 `admin`、而房间 `discussion_mode` 仍是 `unlimited` 且本次未给 `single` → 同上 400（不静默改写用户数据）。
+- **字段穿透点（grill C13，必须一起改）**：
+  - `web/server.py:489-497` 的 `_room_payload` 增 `discussion_mode` 键（`_team_state.rooms` 与 `room_state.room` 自动带上）；
+  - `web/server.py:604-605` 的 `api_update_room` 硬编码白名单增 `discussion_mode`（否则 PATCH 静默丢字段）；
+  - `web/team.py:627-689` 的 `create_room`/`update_room` 增参数与归一化函数 `_normalize_discussion_mode`；
+  - 不新增 `discussion_active`（冗余），前端用 `round_active && room.discussion_mode === "unlimited"` 推导。
 
-- `_rounds: dict[room_id, _ChainState]`：房间认领从「一轮」提升为「一条讨论链」，链内轮与轮之间**不释放**认领。
-  - 因此 `is_round_active(room_id)` 语义扩展为「该房间有进行中的讨论/轮次」，`room_state.round_active` 保持同名同义。
-- `_ChainState` 字段（钉死）：
-  - `room_id`；`discussion_mode`（链启动时快照）；`started_at`（`time.monotonic`，构造函数可注入 `clock` 便于测试）；
-  - `rounds: list[_RoundState]`；`turns: int`（链内成员回合累计）；`stop_requested: bool`；
-  - `current: _RoundState | None`（当前轮；轮间窗口为 `None` 或已关闭轮）；
-  - `pending_mentions: list[str]`（轮间窗口到达的用户行首 `@`，应用到下一轮 slot 顺序）；
+### Decision 2：讨论链状态模型（`chain_id`、`closed` 标记、await 纪律）
+
+- `_rounds: dict[room_id, _ChainState]`：房间认领从「一轮」提升为「整条讨论链」；`is_round_active` 语义 = 该房间有进行中的讨论/轮次（`room_state.round_active` 同名同义）。
+- `_ChainState` 钉死字段：
+  - `room_id`；`chain_id: str`（房间内单调，形如 `"<room_id>:<n>"`，由 `self._chain_seq: dict[room_id,int]` 同步自增）；
+  - `discussion_mode`（链启动快照）；`started_at: float`（`clock()`，构造函数注入 `clock: Callable[[], float] = time.monotonic`）；
+  - `rounds: list[_RoundState]`（**已完成**的轮，含被停止打断的轮）；`round_index: int`（当前轮 1-based，无轮为 0）；`turns: int`（链内已完成成员回合数）；
+  - `stop_requested: bool`；`closing: bool`（结束决定已做出，用于身份判断与 `discussion_ended` 一次性发送）；
+  - `current: _RoundState`（**始终持有最近一轮**；轮间窗口靠 `_RoundState.closed` 判定，grill C8）；
+  - `pending_mentions: list[str]`（轮间窗口到达的用户行首 `@`；**被某轮开局 slot 消费后立即清空**，链结束随链丢弃，不跨链）；
+  - `pending_user_seqs: list[int]`（本链中「尚无任何成员回合切片看到」的用户条目 `seq`；用于 Q1 收敛判定）；
   - `limits`（链启动时从 `TeamConfig` 快照的 `max_rounds/max_turns/max_seconds`）。
-- 用户消息在链进行中到达（`submit_user_message` 的 active 分支）：
-  - 追加房间日志（现有行为）；
-  - 行首 `@` 追加到 `current` 轮的 slot（沿用 `_append_called_slots`，用户口径 `leading_only=True`）；
-  - 若 `current is None` 或该轮已关闭（轮间窗口），`@` 记入 `chain.pending_mentions`，由下一轮开局 slot 应用（去重、不重复插入）；
-  - `SHALL NOT` 改变链的安全阀基数（上限是链级预算，链启动时固定），`SHALL NOT` 打断续轮。
-- 单轮模式同样走"链"结构（链只含 1 轮），以保证只有一套房间互斥/取消逻辑；但事件与返回值与现状一致（见 Decision 7）。
+- `_RoundState` 增字段：`closed: bool`（在本轮收尾**同步区**内置 `True`）。
+- **生命周期与 `await` 纪律（grill C1）**：沿用现有单轮不变量（`orchestrator.py:369-385`）——
+  1. 链认领在任何 `await` 之前（同步）；
+  2. 每轮收尾的「轮终止判定 → `system` 追加 → `rounds.append` → `round_index` 推进 → 续轮/结束决定」全在**一段无 await 的同步区**内完成；
+  3. **结束路径**：同步区继续执行「置 `chain.closing` → `_reset_room_statuses` → `_release_round`（身份判断）」，之后才 `await` 发 `system_entry` / `round_ended` / review / `discussion_ended`。⇒ 收尾 await 期间到达的用户消息看到房间**已释放**，会开**新链**（不会排队进将死链）；旧链终态事件与新链事件靠 `chain_id` 守卫区分；
+  4. **续轮路径**：同步区只推进到「决定继续 + 置 `closed`」，随后 `await` 发 `round_ended(chain_continues=true)` / review，再进入下一轮；此期间到达的用户消息看到 `current.closed == True` ⇒ 只记 `pending_mentions`（不再往已关闭轮追加 slot），下一轮开局应用。
+- 用户消息在链内的契约（grill C16，Q1 裁决后定稿）：
+  - 唯一保证 = **进房间日志 + 行首 `@` 排入当前/下一轮 slot**；SHALL NOT 保证必有成员回合消费它。
+  - 若在成员回合切片构造之后到达（无任何回合看到）→ 记入 `chain.pending_user_seqs`；收敛判定时按 Q1 裁决处理（推荐：**不得以 `converged` 结束**，有余量则强制再开一轮）。
+- 用户消息消费判定：`_run_slot` 内 `view = log.build_injection(...)` 后，把 `view` 覆盖到的最大 `seq` 之前的所有 `pending_user_seqs` 移除（切片构造即视为本轮看到）。
 
-## Decision 3：轮次推进与续轮判定
+### Decision 3：轮次推进与续轮判定（同步区算法，钉死）
 
-- 链循环：`_run_discussion(room, opening_text)`：
-  1. 在任何 `await` 之前认领 `self._rounds[room.id] = chain`（沿用现有互斥论证：查—建无 await 点）；
-  2. 第 1 轮：append 用户条目（`log.append_user`），`start_seq = entry.seq`；第 k>1 轮：append `system` 条目 `讨论继续（第 k 轮）`，`start_seq = entry.seq`；
-  3. 每轮 slot = `opening_slots(room, opening_text_or_empty, roster, main_bot_ids)`，再应用 `chain.pending_mentions`（把被点名者按其顺序插到队首、去重、非本群/自己忽略）；
-  4. 每轮预算 = `len(slots) + extra_turns + (admin ? admin_extra_turns : 0)`，但**再与链剩余回合额度取 min**（`chain.limits.max_turns - chain.turns`）；剩余 ≤ 0 → 不开始该轮，链以 `max_turns` 结束；
-  5. `await self._drive(chain, state)`；
-  6. 轮终止判定：`stop_requested` → `stopped`；`turns >= limit` 且仍有未走 slot → `limit`（沿用 `system` 文案「本轮因达上限结束」）；0 发言且全部失败 → `all_failed`；否则 `completed`；
-  7. 追加 `system`（仅 limit 时）、`chain.rounds.append(state)`、`on_round_end` review 调度（沿用：每轮一次，不因续轮改变）；
-  8. **续轮判定**（`can_continue`）全部满足才续：
-     - 房间当前 `discussion_mode == "unlimited"` 且 `reply_mode == "everyone"`（实时读 room：链中改回 `single` → 本轮后结束，reason `mode_changed`）；
-     - 本轮 `termination == "completed"` 且 `state.posts` 非空（有人真的发言）；
-     - `not chain.stop_requested`；
-     - 房间仍存在且有 ≥1 成员；
-     - `len(chain.rounds) < max_rounds`、`chain.turns < max_turns`、`elapsed < max_seconds`；
-  9. 每轮结束都发 `round_ended`（`chain_continues` 标记是否续轮）；不续则退出循环并收尾。
-- 链结束原因枚举（钉死，`discussion_ended.reason`）：`converged`（最后一轮 0 发言、0 失败）/ `all_failed` / `stopped` / `max_rounds` / `max_turns` / `max_seconds` / `mode_changed` / `cancelled` / `error` / `single_round`（单轮模式；事件仅 unlimited 发，见 Decision 7）。
-- 链结束写 `system`（仅 `unlimited`）：`converged` →「讨论已收敛（本轮全员静默）」；`stopped` →「讨论已由用户停止」；`all_failed` →「讨论已中止（本轮全员失败）」；`max_*` →「讨论达安全上限结束」；`mode_changed` →「讨论模式已切换为单轮」；`cancelled` / `error` 不写日志（沿用取消 teardown 只发事件口径）。
+- `_run_discussion(room, opening_text)`：
+  1. **前置（同步）**：若 `room.members` 为空 → 不建链，按单轮语义走退化路径：append 用户条目、`await` 发 `user_message`、`await` 发 `round_ended(termination="completed", 无新字段)`、`await` review；返回 `RoundResult(termination="completed", rounds=0)`（grill C9：不出现误导性的 `converged`，也不发 `discussion_*`）。
+  2. **认领（同步）**：`self._rounds[room.id] = chain`（查—建之间无 await）。
+  3. append 用户条目（同步）；`await` 发 `user_message`。
+  4. 循环 `while True`：
+     a. **同步**：第 k>1 轮先 `log.append_system("讨论继续（第 k 轮）")` 并记 `next_system_entry`；`slots = opening_slots(room, opening_text_or_empty, roster, main_bot_ids)`；应用并清空 `pending_mentions`（按顺序插到队首、去重、非本群/自己忽略）；第 1 轮把开局用户条目 seq 加入 `pending_user_seqs`；建 `_RoundState(limit = min(轮预算, max_turns - chain.turns))`；`chain.current = state`；`chain.round_index += 1`。
+     b. `await` 发 `system_entry`（若有，见 Decision 7）。
+     c. `await self._drive(chain, state)`（每 slot 串行；停止/墙钟检查点见 Decision 5/6）。
+     d. **同步收尾区**：`state.closed = True`；轮终止判定：
+        - `chain.stop_requested` → `stopped`
+        - `state.turns >= state.limit and state.index < len(state.slots)` → `limit`（append `system`「本轮因达上限结束」）
+        - `state.posts` 空且 `state.failures > 0` → `all_failed`
+        - 否则 `completed`
+        `chain.rounds.append(state)`；`chain.turns += state.turns`；
+        链级结束判定 `reason = _decide_chain_end(...)`（**纯同步、只看当前快照**）：
+        | 优先级 | 条件 | reason | 备注 |
+        |---|---|---|---|
+        | 1 | `chain.stop_requested` | `stopped` | 用户停止（第四出口） |
+        | 2 | 房间已不存在或无成员 | `completed` | 空房间退化语义 |
+        | 3 | `room.discussion_mode != "unlimited"` 或 `reply_mode != "everyone"` | `mode_changed` | 链中被切回单轮 |
+        | 4 | 本轮 `termination == "limit"` | `round_limit` | 本轮达本轮预算、链不续（grill C2） |
+        | 5 | `len(chain.rounds) >= limits.max_rounds` | `max_rounds` | |
+        | 6 | `chain.turns >= limits.max_turns` | `max_turns` | |
+        | 7 | `elapsed >= limits.max_seconds` | `max_seconds` | |
+        | 8 | 本轮 0 发言 0 失败，且 `pending_user_seqs` 为空 | `converged` | 自然收敛 |
+        | 9 | 本轮 0 发言且有失败 | `all_failed` | |
+        | 10 | 本轮有发言（`posts` 非空） | `None`（继续） | |
+        | 11 | 本轮 0 发言 0 失败但**有未消费用户消息** | `None`（强制再开一轮，受 5–7 限制） | Q1 推荐口径 |
+        若 `None` → `chain_continues = True`；否则 `chain_continues = False` 且 `chain.closing = True`，append 链结束 `system`（按 reason 文案表），`_reset_room_statuses` + `_release_round`（**同步**）。
+     e. `await` 发 `round_ended`（`chain_id` / `round_index` / `chain_continues` / `termination` / `limit` / `status_seq`；单轮模式 payload 逐字段不变，见 Decision 9）。
+     f. `await` review sink `on_round_end`（每轮一次，沿用）。
+     g. 若 `chain_continues` → 回到 4a；否则 `await` 发 `discussion_ended`（`chain_id`、`reason`、`rounds`=已完成轮数、`rounds_started`、`turns`、`elapsed_seconds`、`status_seq`），返回 `RoundResult`。
+- 链 end 的 `system` 文案（钉死）：`converged`「讨论已收敛（本轮全员静默）」；`stopped`「讨论已由用户停止」；`all_failed`「讨论已中止（本轮无人发言，存在失败）」；`round_limit`「讨论因本轮达上限结束」；`max_*`「讨论达安全上限结束」；`mode_changed`「讨论模式已切换为单轮」；`completed`（无成员）不写链级 system（退化路径已返回）。
+- `rounds` 口径（grill C17）：`discussion_ended.rounds` = **已完成**轮数（含被中断的轮）；`rounds_started` = 进入过的轮数；停止发生在第 3 轮中 ⇒ `rounds=2`、`rounds_started=3`（用例断言精确值）。
 
-## Decision 4：全员静默 = 收敛（不额外调用模型判定）
+### Decision 4：收敛、提示词与文案
 
-- 一轮内 `state.posts == []` 且 `state.failures == 0` → 该轮无人发言（全部 `[PASS]`/空产出）→ 链以 `converged` 结束。
-- 不做"让 admin/某个成员判断是否继续"的额外 LLM 调用：多一次调用就多一份成本与延迟，且收敛信号本身已由 `[PASS]` 提供（`ROOM_REPLY_INSTRUCTION` 已要求"没有新内容回 `[PASS]`"，`:60-64`）。
-- 提示词增强（仅 `unlimited` 的成员回合）：在现有成员 prompt 末尾追加两条固定句：
-  - `Round {k} of a continuous discussion; every member speaks at most once per round.`
-  - `If the discussion has converged or you have nothing new to add, reply [PASS] — do not repeat points already made; do not speak just to fill the round.`
-  - 措辞要求：不改变 `ROOM_REPLY_INSTRUCTION` 的哨兵契约，只在它之前追加；`single` 模式 prompt 逐字节不变（测试锁定）。
+- 「全员静默」= 本轮 `state.posts == []` 且 `state.failures == 0`（`posts` 只收 `post` 条目；空文本产出已归一为 silent，见 `orchestrator.py:521-544`），且无未消费用户消息（Q1 裁决后定稿）。
+- **不为"是否继续"额外调用模型判定**（多一次调用就多一份成本与延迟）。
+- 成员 prompt 增强（仅 `unlimited`）：
+  - 在 `ROOM_REPLY_INSTRUCTION` **之前**（即 prompt 末段）追加：
+    - 第 1 轮：`Round 1 of a continuous discussion; every member speaks at most once per round.`
+    - 第 k>1 轮：`Round k of a continuing discussion. There is no new user message this round; the discussion continues because the previous round produced new content.`
+    - 共同句：`If the discussion has converged or you have nothing new to add, reply [PASS] — do not repeat points already made; do not speak just to fill the round.`
+  - `single` 模式 prompt 逐字节不变（测试锁定：同一输入下字符串相等）。
+- `all_failed` 文案改「本轮无人发言，存在失败」（grill C14），不再写"全员失败"。
 
-## Decision 5：停止讨论 = 优雅停止（新增第四出口）
+### Decision 5：停止讨论 = 优雅停止（`unlimited` 的第四出口；`single` 见 Q3）
 
-- 触发：
-  - REST `POST /api/team/rooms/{room_id}/discussion/stop` → `{"stopping": bool, "room_id": ...}`；房间不存在 404；workspace 非法 403（沿用其他房间端点口径）。
-  - 房间 WS 消息 `{"type": "stop_discussion"}`（前端主路径）。
-  - 两者都调 `TeamService.stop_discussion(ws_path, room_id)` → `RoomOrchestrator.request_stop(room_id)`。
-- `request_stop`：房间无活动链 → 返回 `False`（幂等 no-op，**不报错**）；否则置 `chain.stop_requested = True`，发 `discussion_stop_requested` 事件，返回 `True`。重复调用不重复发事件。
-- 生效点（**不打断正在跑的成员回合**，避免撕裂 run/工具状态）：
-  - `_drive` 每跑完一个成员回合后检查 → 直接跳出，**跳过本轮剩余 slot**；
-  - 轮间续轮判定前检查；
-  - 两处都命中后：轮 `termination = "stopped"`，追加 `system`「讨论已由用户停止」，链 reason `stopped`。
-- 停止后状态：成员状态表重置为 idle（沿用 `_reset_room_statuses`）；房间认领释放，用户下一条消息开新链。
-- 单轮模式下 `request_stop`：无"链"可续，但若当前轮正在跑，语义 = 本轮在当前成员回合后结束（`termination="stopped"`）；无活动轮 → `False`。
+- 触发：REST `POST /api/team/rooms/{room_id}/discussion/stop` → `{"stopping": bool, "room_id": ...}`；房间 WS 消息 `{"type": "stop_discussion"}`（前端主路径）。
+- `TeamService.stop_discussion(workspace, room_id)`：**workspace 口径与 `submit_room_message` 一致**（grill C19）：先按传入 workspace 找；找不到则 `workspace_of_room(room_id)` 回落，仍找不到 → `404 unknown_room`。
+- `RoomOrchestrator.request_stop(room_id) -> bool`：
+  - 无活动链（或链已 `closing`）→ `False`（幂等 no-op）。
+  - 否则在**同步段**内完成「读 `stop_requested` → 判首次 → 置位」，`await` 发 `discussion_stop_requested`（`chain_id`）；重复请求返回 `True` 但不再发事件（grill CQ11）。
+- 生效点（**不打断正在跑的成员回合**）：
+  - `_drive` 每个 slot 结束后检查 `stop_requested` → 跳出（跳过本轮剩余 slot）；
+  - 轮间续轮判定（Decision 3 的同步区）已含 `stopped` 优先级第 1；
+  - 停止请求恰好落在「最后一个 slot 已跑完、尚未进入收尾同步区」→ 同步区仍会读到 `stop_requested`（单线程无竞态）。
+- 停止后：成员状态 reset（同步、先于释放）、房间认领释放、写 `system`、发 `round_ended(stopped)` / `discussion_ended(stopped)`。
+- `single` 模式：按 Q3 推荐 = **收紧**（不提供停止、`request_stop` 返回 `False`、不产生 `stopped`）；若用户裁决放开，则改为"单轮也在当前回合后结束本轮"并在 delta 让「三出口」变「四出口」。
 
-## Decision 6：安全阀参数（`team:` 配置节，链启动快照）
+### Decision 6：安全阀（`team:` 配置节，链启动快照）
 
 - `TeamConfig` 新增（`agent/config.py:273-291`）：
   - `discussion_max_rounds: int = 200`
   - `discussion_max_turns: int = 600`
   - `discussion_max_seconds: float = 6000.0`
-- 解析：`_parse_team_config`（`:1677-1712`）校验为正整数/正数，非法抛 `ConfigError`（与既有 `turn_timeout_seconds` 同形）；缺省取上述值。
-- 注入：`web/team.py:200-209` 构造 `RoomOrchestrator` 时传入；编排器以构造参数接收（默认值与 `TeamConfig` 一致，便于单测直接构造）。
-- 语义：链启动时**快照**三值（链内改配置不影响在跑链；下一条链生效，记录在文档与测试）。判定点：
-  - 续轮前：`rounds >= max_rounds` / `turns >= max_turns` / `elapsed >= max_seconds` → 链结束（对应 reason）；
-  - 轮内回合：`round_limit = min(轮预算, max_turns - turns)`，达到即以 `limit` 收尾；
-  - 墙钟：只在轮间判定（不中断正在跑的成员回合）。**已知边界**：单成员长回合可能跨过墙钟，链会在该轮结束后才停；这是有意的（不打断 run）。
-- 单轮模式不使用这三个参数（单轮预算沿用现有 4/4/2/4 参数）。
-- `asterwynd.example.yaml` 增加 `team:` 节（含 `turn_timeout_seconds`、既有预算参数与三个新参数的中文注释示例）。
+- 解析（`_parse_team_config`）：`discussion_max_rounds`/`discussion_max_turns` 用 `_parse_timeout_seconds` 同形的**正整数、显式拒 bool** helper（grill C15；0 非法）；`discussion_max_seconds` 用 `float()` + `> 0`（同 `turn_timeout_seconds`）。非法值抛 `ConfigError`。
+- **生效时机（grill C5）**：`TeamConfig` 只在 Web 启动期解析一次，`_WorkspaceTeam` 按 workspace 缓存并一次性构造 `RoomOrchestrator` ⇒ **改 YAML 需重启 Web 进程**才生效；链启动时快照三值（链内不变）。文档与测试按此写（两次构造、不同 limits ⇒ 两条链各自快照）。
+- **两档并非独立（grill 补充）**：默认 3~5 人 everyone 房下，`max_turns` 通常先于 `max_rounds` 触发（每轮 = 成员数回合；3 人房 600/3=200 轮恰与 200 轮打平，5 人房 600/5=120 轮先触发）。design 与文档 SHALL NOT 把两档描述成互相独立；测试分别用小值单独触发。
+- 判定点：
+  - 续轮前（同步区，Decision 3 优先级 5–7）。
+  - 轮内：`round_limit = min(轮预算, max_turns - chain.turns)` 截断本轮。
+  - 墙钟检查点：**Q4 推荐 = 每个 slot 之间（`_drive` 循环顶）也检查一次**（不打断在跑回合，仅不再开新回合），最坏越界 ≤ 一个 `turn_timeout`（默认 240s）；若用户裁决只保留轮间检查，则最坏越界 = 本轮剩余 slot × `turn_timeout`（默认 3 人 everyone 屋约 44 分钟，grill C10 量级）。
+- 单轮模式不使用这三个参数。
 
-## Decision 7：事件契约与前端状态（单轮模式零变化）
+### Decision 7：事件契约、`chain_id` 守卫、链内 `system` 可见性、UI 状态
 
-- **`unlimited` 模式新增事件**（`RoomEventBus` 转发，见 `web/server.py:663-750`）：
-  - `discussion_started {room_id, discussion_mode, members:[persona_id], round_index: 1, limits:{max_rounds,max_turns,max_seconds}}`：链启动，任何成员回合之前。
-  - `discussion_stop_requested {room_id}`：`request_stop` 首次生效请求时。
-  - `discussion_ended {room_id, reason, rounds, turns, elapsed_seconds, status_seq}`：链结束（唯一权威终态）。
-  - `round_ended` 扩展字段：`round_index`（链内 1-based）、`chain_continues: bool`；`termination` 枚举新增 `stopped`（既有 `completed/limit/all_failed` 不变）。
-- **`single` 模式**：不发上述三个新事件，`round_ended` 不携带新字段（或携带 `chain_continues=false`、`round_index=1`？——**决定：不携带**，保持旧前端与旧测试逐字节兼容；实现上用 `if chain.discussion_mode == "unlimited"` 分支）。
-- `room_state` 快照新增：`discussion_active: bool`（= 有活动链）、`discussion_round: int`（当前链已完成的轮数；无链为 0）、`discussion_reason: str | null`（最近一次链结束原因，仅本进程内存；重启后为 null）。`round_active` 保留原字段与语义（有进行中的讨论/轮次）。
-- 前端状态文案（`group.js` 现有 `setStatus` 机制）：
-  - `discussion_started` / 续轮 →「讨论中（第 k 轮）」；
-  - `discussion_ended` → `converged`「讨论已收敛」/ `stopped`「讨论已停止」/ `max_rounds|max_turns|max_seconds`「讨论达安全上限」/ `all_failed`「讨论已中止（全员失败）」/ `mode_changed`「讨论模式已切换为单轮」/ `cancelled`「讨论已中止」/ `error`「讨论异常结束」；
-  - `round_ended` 且 `chain_continues=true` → **不**显示"本轮结束"（避免轮间闪错状态）；`chain_continues=false` 且 unlimited → 由 `discussion_ended` 接管；
-  - `single` 模式沿用现有「本轮结束 / 本轮因达上限结束 / 本轮已中止 / 本轮异常结束」文案。
-- 停止按钮：`room_state.discussion_active` 或收到 `discussion_started` 后可见；点击发 WS `stop_discussion`（WS 未连通时降级 REST），点击后置灰「正在停止…」，收到 `discussion_stop_requested` 保持置灰，`discussion_ended` 后恢复。
+- `unlimited` 模式事件（房间总线转发，`web/server.py:663-750`）：
+  - `discussion_started {room_id, chain_id, discussion_mode, members, round_index: 1, limits}`
+  - `system_entry {room_id, chain_id, seq, text}`（链内新增 `system` 条目实时广播：续轮 / 收敛 / 停止 / 达上限 / 模式切换）
+  - `discussion_stop_requested {room_id, chain_id}`
+  - `discussion_ended {room_id, chain_id, reason, rounds, rounds_started, turns, elapsed_seconds, status_seq}`
+  - `round_ended` 扩展：`chain_id`、`round_index`、`chain_continues`；`termination` 新增 `stopped`。
+- **`single` 模式**：不发 `discussion_*`/`system_entry`，`round_ended` payload **逐字段不变**（`{room_id, termination, limit, status_seq}` 四键，整字典快照断言；grill CQ10）。
+- **链身份守卫（grill C6）**：`round_ended` / `discussion_ended` / `system_entry` / `discussion_stop_requested` 都带 `chain_id`；`group.js` 维护 `state.chainId`（来自 `discussion_started` / `room_state` 快照），只应用与其一致的轮/链终态。`discussion_ended` 由 `chain.closing` 保证每链至多一次。
+- `room_state` 快照新增：`discussion_round`（当前链已进入的轮序号，1-based；无链为 0）、`discussion_reason`（最近一次链结束原因，进程内内存）。`room` 对象带 `discussion_mode`。不新增 `discussion_active`。
+- 前端（`web/static/group.js` + `group_status.js`）：
+  - 纯函数放 `group_status.js` 并导出（grill C12）：`describeRoundEnd(data)`、`describeDiscussionEnd(reason)`、`shouldShowStop(snapshot)`、`shouldApplyChainEvent(state, data)`；`group.js` 只做 DOM/状态调用。
+  - 状态文案：`discussion_started` / 续轮 →「讨论中（第 k 轮）」；`discussion_ended` 映射 `converged`「讨论已收敛」/ `stopped`「讨论已停止」/ `max_*`「讨论达安全上限」/ `all_failed`「讨论已中止（本轮无人发言，存在失败）」/ `mode_changed`「讨论模式已切换为单轮」/ `cancelled`「讨论已中止」/ `error`「讨论异常结束」/ `round_limit`「讨论因本轮达上限结束」/ `completed`「讨论已结束」；`chain_continues=true` 时**不**显示「本轮结束」。
+  - 停止按钮：`round_active && room.discussion_mode==="unlimited"` 时可见（`shouldShowStop`），点击发 WS `stop_discussion`（WS 未连通 → REST），点击后置灰「正在停止…」，`discussion_ended` 后恢复。
+  - 链内 `system` 条目经 `system_entry` 事件实时 append 到 timeline（按 `seq` 去重合并），不再只靠刷新。
+  - 设置对话框：`discussion_mode` 下拉的 `unlimited` 选项在 `reply_mode != everyone` 时 `disabled`（`openDialog` 无字段联动，用静态禁用 + 服务端 400 兜底展示错误；grill C11）。
+  - 头部布局：停止控件放进既有 `.group-room-actions`，390px 下沿用 wrap、SHALL NOT 横向溢出（对应 `style.css:2274,2309-2316`）。
+- `discussion_round` 口径（grill C13）：**当前链已进入的轮序号**（1-based；无链 0）。文案「第 k 轮」直接用它，不做 +1。
 
-## Decision 8：取消 / 异常 teardown 扩展到链
+### Decision 8：取消 / 异常 teardown 扩展到链
 
-- 现状：轮 task 被 cancel（房间 WS 断开 → `web/server.py:748-750`）时 `_run_round` 捕获 `CancelledError` → `_reset_room_statuses` + `_schedule_teardown` 尽力发 `round_ended(cancelled)`（`orchestrator.py:408-422`）。
-- 新语义：链内取消 = 结束当前轮 + 结束链：`round_ended(termination="cancelled", chain_continues=false)` + `discussion_ended(reason="cancelled", status_seq=...)` 由同一个后台 teardown task 尽力发出；不写房间日志；不产生 `RoundResult`；状态表 reset 先于释放认领（沿用现有次序）。
-- 意外异常同理：`reason="error"`；异常仍向上抛（保持调用方可见），teardown 后台尽力发事件。
-- 幂等：链已结束/已被替换时，迟到 teardown 只发事件不改状态（沿用 `_schedule_teardown` 的身份判断）。
-- WS 断开即取消仍是既有语义（本 change 不改）；「停止讨论」与"断线取消"的区别写进文档：前者不打断当前成员回合、写日志；后者立即 teardown、不写日志。
+- 现状：轮 task 被 cancel（房间 WS 断开 → `web/server.py:748-750`）→ `_run_round` 捕 `CancelledError` → reset + `_schedule_teardown` 尽力发 `round_ended(cancelled)`（`orchestrator.py:408-422`）。
+- 新语义：链内取消 = 结束当前轮 + 结束链。同步区先 reset/置 `closing`（沿用现有次序），后台 teardown 尽力发 `round_ended(termination="cancelled", chain_id, chain_continues=false)` + `discussion_ended(reason="cancelled", chain_id, status_seq)`；不写房间日志、不产生 `RoundResult`。意外异常同理（`reason="error"`，异常仍上抛）。
+- 幂等与身份：沿用 `_schedule_teardown` 的身份/一次发送判断；`chain.closing` 防止重复 `discussion_ended`。
+- **Q2 待裁决**：链生命周期是否仍绑房间 WS（推荐：保持现状 + 链因断线中止时写一条 `system`「讨论因页面断开而中止」，让用户知道原因；若改服务端持有则另立设计）。
 
-## Decision 9：兼容性与迁移
+### Decision 9：兼容性与迁移
 
-- 数据：旧 `room.json` 缺 `discussion_mode` → 读为 `single`；写回时补字段（无需迁移脚本）。
-- 事件：仅 `unlimited` 新增事件；`single` 模式事件与 payload 与现状一致（旧前端可继续工作）。`round_ended` 的 `stopped` 只可能在用户主动停止时出现（单轮/无限都可能有）。
-- RETURN：`RoundResult` 新增 `discussion_mode: str = "single"`、`discussion_reason: str | None = None`、`rounds: int = 1`（默认值保证既有构造点兼容）；`termination` 新增 `stopped`。
-- 既有测试：单轮相关断言不变；仅当测试构造 `RoundResult` 面向 `unlimited` 时才用新字段。
-- 不做：旧前端版本协商；`admin` 模式无限轮；把 `ROOM_BOT_ROUNDS=3` 作为上限（用户要求"直到收敛/手动停止"，固定 3 轮不满足）。
+- 数据：旧 `room.json` 缺 `discussion_mode` → 读为 `single`；写回补字段，无迁移脚本。
+- 事件：`single` 模式零新事件、`round_ended` 逐字段不变（整字典断言）。`unlimited` 事件均为新增。
+- `RoundResult` 新增带默认值字段（grill D11）：`discussion_mode: str = "single"`、`discussion_reason: str | None = None`、`chain_id: str | None = None`、`rounds: int = 0`、`rounds_started: int = 0`；`termination` 新增 `stopped`（`single` 不产生）。
+- 提示词：仅 `unlimited` 追加（Decision 4）。
+- 不做：旧前端版本协商（`chain_id` 缺失/不一致时旧前端按现状显示，可接受）；`admin` 模式无限轮；固定 3 轮上限（用户要求"直到收敛/手动停止"）。
 
-## Decision 10：测试策略（TDD，先红后绿）
+### Decision 10：测试策略（TDD，先红后绿）
 
-| 层 | 用例（每条先红后绿） |
+| 层 | 用例（每条先红后绿；**期望值写死**：调用次数、system 文案、reason） |
 | --- | --- |
-| 模型/存储 | `Room.discussion_mode` 默认 `single`、roundtrip、旧 JSON 缺字段兼容；非法值读取回落 |
-| 配置 | `TeamConfig` 三参数默认值（200/600/6000）、YAML 覆盖、非法值抛 `ConfigError`、`asterwynd.yaml` 解析不回归 |
-| 编排器（核心） | ① `unlimited` 连开 ≥3 轮（FakeRunner 脚本第 1 轮全员发言、第 2 轮部分 PASS、第 3 轮全员 PASS → `converged`）；② 每轮每人各一次、admin 先；③ 续轮自动开轮且无需用户消息；④ `single` 模式仍只跑一轮且事件/payload 与现状完全一致（快照断言）；⑤ 用户插话：链中发消息 → 进日志、`@` 插当前轮、链继续；轮间窗口 → `pending_mentions` 应用下一轮；⑥ 停止：在成员回合进行中请求 → 当前回合完成后立即结束（剩余 slot 不跑）、`round_ended(stopped)` + `discussion_ended(stopped)`、写 system；⑦ 停止幂等（重复请求、无活动链 no-op）；⑧ 安全阀三档（`max_rounds` 用小值 + 每轮有人发言；`max_turns` 用 `round_limit` 截断；`max_seconds` 注入 clock 跨阈值）；⑨ 链中把 `discussion_mode` 改回 `single` → 本轮后 `mode_changed`；⑩ 取消（`CancelledError`）→ `round_ended(cancelled)` + `discussion_ended(cancelled)` + 状态 reset；⑪ 链结束释放房间认领（下一条消息开新链）、`round_active` 语义；⑫ review sink 每轮 `on_round_end` 仍被调用 |
-| Web 服务 | 房间 create/patch：`unlimited`+`admin` → 400 `discussion_mode_requires_everyone`；改 reply_mode 冲突 → 400；非法值 → 400 `invalid_discussion_mode`；`room_state` 含 `discussion_mode/discussion_active/discussion_round`；REST stop 幂等（无链 `stopping=false`、有链 `true`）；WS `stop_discussion` 触发；WS 事件流含 `discussion_started/stop_requested/ended` 且顺序正确；单轮房间事件流与现状一致 |
-| 前端 | 设置下拉仅 everyone 时可选 unlimited；提交字段；停止按钮可见性/置灰/恢复；状态文案映射全覆盖（JS 单测 + 现有浏览器测试模式） |
+| 模型/存储 | `discussion_mode` 默认 `single`、roundtrip、旧 JSON 缺字段兼容 |
+| 配置 | 三参数默认 200/600/6000、YAML 覆盖、非法值（0/负数/字符串/bool）抛 `ConfigError`；`TeamConfig` 构造两次不同 limits ⇒ 两条链各自快照 |
+| 编排器（核心） | ① unlimited 连开 3 轮（R1 全员发言 → R2 部分 PASS → R3 全员 PASS）→ `converged`、`rounds=3`、`rounds_started=3`、system 文案精确；② 每轮每人一次、admin 先；③ single 模式只跑一轮，`round_ended` 整字典快照与现状一致；④ 用户插话进日志 + `@` 插当前轮；轮间窗口进 `pending_mentions` 且下一轮生效后被清空（重复 `@` 只置顶一次）；链结束未消费 mentions 不跨链；⑤ 停止：回合进行中请求 → 该回合跑完即结束、剩余 slot 不跑、`rounds=2/rounds_started=3`、`round_ended(stopped)` + `discussion_ended(stopped)`、只发一次；⑥ 无活动链 `request_stop=False`；`single` 房 `request_stop=False` 且不产生 `stopped`（Q3 推荐）；⑦ `max_rounds`/`max_turns`/`max_seconds` 三档（clock 注入）+ `round_limit` 路径（`extra_turns=0` 注入）；⑧ 链中切回 `single` → `mode_changed`；⑨ 空成员房间 unlimited → 退化单轮、无 `discussion_*`（grill C9）；⑩ 取消/意外异常 → `round_ended(cancelled|error)` + `discussion_ended` 一次 + 状态 reset；⑪ 收尾同步区竞态：gate 阻塞最后一个 slot 结束后才放行，停止/取消/新消息三路各断言（grill C1）；⑫ review sink 抛异常不中断链；⑬ Q1 未消费消息：本轮 0 发言但插话无人看到 → 强制再开一轮（若 Q1 选推荐）；安全阀耗尽时以 cap reason 结束且消息留在日志；⑭ `chain_id` 递增值与事件去重 |
+| Web 服务 | 房间 create/patch 校验（三种非法组合）；`_room_payload`/`PATCH` 白名单带 `discussion_mode`；`room_state` 字段（`discussion_round` 口径）；REST stop 幂等 + 跨 workspace 回落；WS `stop_discussion`；事件顺序 `discussion_started → member_* → discussion_stop_requested → round_ended(stopped) → discussion_ended(stopped)`；`single` 事件流与现状一致 |
+| 前端 | `group_status.js` 纯函数（文案映射全覆盖、`shouldShowStop`、`shouldApplyChainEvent` 的 chain_id 守卫、`round_ended(chain_continues)` 不显示「本轮结束」）；设置下拉 disabled；停止按钮置灰/恢复；`system_entry` 追加时间线；390px 头部不溢出（浏览器用例） |
 | 回归 | 全量 `uv run pytest -q`；`openspec validate --all --strict`；`uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` |
 
 ## Risks
 
-- **成本失控**：无限链本质是持续调用模型。缓解：默认 `single`、房间级开关、三档安全阀可配、`[PASS]` 收敛提示、停止按钮；文档明确单轮成本 = N 次调用、无限链按轮线性放大。
-- **停止/取消竞态**：停止请求与成员回合完成、WS 断线取消、链间窗口三者竞争。缓解：状态机只在明确检查点读 `stop_requested`；取消走身份判断的 teardown；测试用 gate 精确覆盖回合结束瞬间。
-- **事件与 UI 状态错乱**：`round_ended` 与 `discussion_ended` 双重终态。缓解：`chain_continues` 权威决定"是否整链结束"；`discussion_ended` 为唯一链终态；`status_seq` 复用现有单调守卫。
-- **规格破坏面**：三份当前规格需要 MODIFIED；收尾须 `current_spec_synced` 事件与 strict validate。
-- **配置放开过高**：默认 200/600/6000 由用户拍板（10 倍档），若实际使用中出现长链成本问题，只需调低 YAML 参数，无需改代码。
+- **成本失控**：默认 `single` + 房间级开关 + 三档安全阀 + `[PASS]` 收敛提示 + 停止按钮；文档写明单轮 = N 次调用、无限链按轮线性放大。
+- **链收尾 await 窗口**：按 Decision 2 的同步区纪律 + `chain_id` 守卫 + 释放后再发终态（与现状单轮同形），并用 gate 用例锁住。
+- **双终态交错**：`round_ended` 与 `discussion_ended` 靠 `chain_id` + `chain.closing` 一次性发送守卫；`status_seq` 沿用单调守卫（`group_status.js:60-65` 是严格小于，同 seq 均会应用，grill D9）。
+- **两档安全阀不独立**：`max_turns` 通常先于 `max_rounds` 触发（见 Decision 6），测试与文档不得声称互相独立。
+- **规格破坏面**：三份当前规格 MODIFIED/ADDED；`configuration` 为 **ADDED**（grill CQ5/C18）；收尾须 `current_spec_synced` 事件。
+- **断线中止不透明**：Q2 推荐在链因断线中止时写 system 说明；若用户选服务端持有，另立设计。
 
 ## Document Impact
 
-- `openspec/specs/multi-agent-collaboration/spec.md`：「房间级互斥与轮次终止」重写 + 「房间应答模式」扩展 + 新增「讨论链自动续轮与收敛」Requirement。
-- `openspec/specs/web-ui/spec.md`：房间设置新增讨论模式、停止按钮、讨论状态文案、WS 事件契约扩展。
-- `openspec/specs/configuration/spec.md`：`team:` 运行参数新增三项。
-- `docs/architecture.md` 群聊小节：终止口径从「仅用户开轮」改为「单轮 / 讨论链」，补停止与安全阀说明。
-- `CONTEXT.md` 词汇表：新增「讨论链」词条。
+- `openspec/specs/multi-agent-collaboration/spec.md`：MODIFIED「房间级互斥与轮次终止」「房间应答模式」；ADDED「讨论链自动续轮与收敛」。
+- `openspec/specs/web-ui/spec.md`：MODIFIED「人设与房间的管理入口」；ADDED「群聊讨论链状态与停止讨论控件」。
+- `openspec/specs/configuration/spec.md`：**ADDED**「群聊讨论链安全阀可配置」。
+- `docs/architecture.md` 群聊小节：终止口径改「单轮 / 讨论链」+ 停止 + 安全阀 + 配置需重启；`CONTEXT.md` 补「讨论链」；`docs/interview-script/` 相关表述检查。
 - `asterwynd.example.yaml`：`team:` 配置节示例。
-- 面试讲稿建议性检查：`docs/interview-script/questions/Q08-multi-agent.md` 如有"群聊终止口径"表述需同步（收尾阶段检查）。
+- `docs/openspec-change-backlog.md`：收尾移除本条目。
+
+## Open Questions (pending user ruling)
+
+- **Q1**（未消费的用户消息）：见 `reviews/grill-design.md` Q1。推荐口径：**收敛优先让位于"消息必须被看到"**——存在未消费用户消息时不得以 `converged` 结束，有余量则强制再开一轮；安全阀耗尽则按 cap reason 结束（消息留在日志，下一条用户消息开新链时可见）。
+- **Q2**（链生命周期与 WS）：推荐保持现状（房间 WS 断开 = 取消链），并**在链因断线中止时写 `system`「讨论因页面断开而中止」**（单轮取消仍不写日志）。
+- **Q3**（single 是否可停止）：推荐**收紧**——单轮不提供停止按钮、`request_stop` 对 `single` 返回 `False`、不产生 `stopped`。
+- **Q4**（墙钟检查粒度）：推荐**每个 slot 之间也检查**（不打断在跑回合，最坏越界 ≤ 一个 `turn_timeout`）。
+
+## User Rulings (2026-10-24)
+
+（待主 agent 停轮确认后回填 Q1–Q4 的用户答复。）
 
 ## Pre-Implementation Review
 
-（待 grill 与设计对抗闭环后回填：grill 决策、修正项、对抗轮次、出口。）
+（待设计对抗闭环与用户裁决后回填：grill 决策、对抗轮次、修复项、出口。）
