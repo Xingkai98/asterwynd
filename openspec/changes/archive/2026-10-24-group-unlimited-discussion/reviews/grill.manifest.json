@@ -5,10 +5,10 @@
   "reviewer_run_id": "58b9344b-10d1-4e51-81b1-7e143a0a811a",
   "author_run_id": "main-session-group-unlimited-discussion",
   "base_sha": "604b56ccb488bc9753b5be89f925a5f30f96d268",
-  "head_sha": "fd8176e181cf47ec70af3efaf37b33b48d04e706",
+  "head_sha": "cceb4cb627ad39c3e7bff0f734ff835221e3df1d",
   "tasks_hash": "6a41689763577d46b5d40e6c1a9049a3b1b7e766a0706f4fab390f000bddae9b",
   "spec_hash": "36e87465f3afc97b2bdd5e30f2176518a13d73a5af8a6929bc8ead9b89951244",
-  "diff_hash": "a16bbf8195297b3c52a62624fdd9837269ad57d617500e395a5012373a2e963e",
+  "diff_hash": "988c1877dd9985e28e21e239335d2ffac524e1145ac0d48107f96bd8b5038e04",
   "report_hash": "ec775b44cf9dc8d0f9d9cbc1ee51afaae88fbc15530e71c972b738111fffdeaa",
   "report_path": "reviews/grill-design.md"
 }

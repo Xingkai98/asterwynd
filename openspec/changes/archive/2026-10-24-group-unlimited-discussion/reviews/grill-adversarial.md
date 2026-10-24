@@ -4,9 +4,9 @@
 
 **PASS（r3 收口，2026-10-24）**。设计阶段对抗闭环共 3 轮，累计 2 个已收口轮（r2 收口批次 II、r3 收口批次 III），≤ 20 上限；无未清 medium+。逐轮证据：
 
-- `reviews/rounds/grill-adversarial-r1.md`：r1 = **CHANGES_REQUESTED**，批次 I 12 条（1 high + 11 medium）——链认领跨 await 窗口（I1）、single 分支未钉死（I2）、`rounds` 口径（I3）、事件发射点缺失（I4）、`pending_user_seqs` 写入时机（I5）、取消路径释放身份（I6）、续轮 slot 入参（I7）、`room_state` 恢复（I8）、delta 内矛盾（I9）、Q 裁决联动（I10）、tasks 字段（I11）、安全阀算术/reason 归属（I12）。
-- `reviews/rounds/grill-adversarial-r2.md`：r2 = **CHANGES_REQUESTED**（修复验证，基线 `3a2ca57c`）：I1–I9、I11–I12 ✅；I10 仅剩 delta 两处未同步 Q2 裁决（1 medium）；L1–L18 全部已修/可接受；新发现 N1–N13 均 low/deferred。
-- `reviews/rounds/grill-adversarial-r3.md`：r3 = **PASS**（修复验证，基线 `086bc57c`）：I10-a/I10-b 两处 medium 全清且与 design/modified 正文逐字一致；N1–N10 落地；r1 I1–I12 回归锚点全在位；无新 medium+（新增 N14–N16 low/nit，按批次冻结规则登记不阻塞）。
+- `notes/grill-adversarial-rounds/grill-adversarial-r1.md`：r1 = **CHANGES_REQUESTED**，批次 I 12 条（1 high + 11 medium）——链认领跨 await 窗口（I1）、single 分支未钉死（I2）、`rounds` 口径（I3）、事件发射点缺失（I4）、`pending_user_seqs` 写入时机（I5）、取消路径释放身份（I6）、续轮 slot 入参（I7）、`room_state` 恢复（I8）、delta 内矛盾（I9）、Q 裁决联动（I10）、tasks 字段（I11）、安全阀算术/reason 归属（I12）。
+- `notes/grill-adversarial-rounds/grill-adversarial-r2.md`：r2 = **CHANGES_REQUESTED**（修复验证，基线 `3a2ca57c`）：I1–I9、I11–I12 ✅；I10 仅剩 delta 两处未同步 Q2 裁决（1 medium）；L1–L18 全部已修/可接受；新发现 N1–N13 均 low/deferred。
+- `notes/grill-adversarial-rounds/grill-adversarial-r3.md`：r3 = **PASS**（修复验证，基线 `086bc57c`）：I10-a/I10-b 两处 medium 全清且与 design/modified 正文逐字一致；N1–N10 落地；r1 I1–I12 回归锚点全在位；无新 medium+（新增 N14–N16 low/nit，按批次冻结规则登记不阻塞）。
 
 ## 收口时登记未修项（均不阻塞）
 
