@@ -58,7 +58,7 @@
 - [x] 2.5 `web/server.py`：REST stop 端点、房间 WS `stop_discussion` 消息、`room_state` 扩展。
 - [x] 2.6 `web/static/group.js` + `index.html` + `style.css`：讨论模式设置、停止按钮、状态文案、
   事件处理与 WS/REST 降级。
-- [ ] 2.7 全量回归：`uv run pytest -q`。
+- [x] 2.7 全量回归：`uv run pytest -q`（本地 Windows：与 master 基线对比，失败集完全一致 145 个均为环境预存在项；新增用例全绿。`tests/agent/tools/test_cgroup.py` 因 Windows `os.kill(pid,0)=TerminateProcess` 会杀 pytest 进程（基线同样），本地复跑以 `--deselect` 排除，CI Linux 全量覆盖）。
 
 ## 3. 规格与文档同步
 
@@ -70,11 +70,11 @@
 - [x] 3.4 `docs/architecture.md` 群聊小节改「单轮 / 讨论链」终止口径 + 停止与安全阀；`CONTEXT.md` 补「讨论链」；
   检查 `docs/interview-script/` 相关表述。
 - [x] 3.5 `openspec/changes/group-unlimited-discussion/workflow-events.jsonl` 补 `current_spec_synced` 事件。
-- [ ] 3.6 实现后独立审阅闭环 `/review-loop` → `reviews/building-review.md`（`## 闭环出口` PASS）。
+- [x] 3.6 实现后独立审阅闭环 `/review-loop` → `reviews/building-review.md`（`## 闭环出口` PASS）。
 
 ## 4. 收尾
 
-- [ ] 4.1 `docs/openspec-change-backlog.md` 移除本 change（`backlog_updated` 事件）。
+- [x] 4.1 `docs/openspec-change-backlog.md` 移除本 change（`backlog_updated` 事件）。
 - [ ] 4.2 归档 move 到 `openspec/changes/archive/2026-10-24-group-unlimited-discussion/`（独立提交，纯 rename）。
 - [ ] 4.3 用归档目录名重建 witnessloop 三份 manifest（grill / grill-adversarial / building）。
 - [ ] 4.4 本地复验：`uv run pytest -q`、`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`、

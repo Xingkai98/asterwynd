@@ -4,6 +4,7 @@
 
 定义 Asterwynd 的结构化配置文件、环境变量覆盖和入口层配置解析规则。当前实现位于 `agent/config.py`，入口层包括 CLI、Web 和 benchmark。
 ## Requirements
+
 ### Requirement: 支持结构化 YAML 配置
 
 系统 SHALL 支持从 `asterwynd.yaml` 读取结构化非敏感配置。缺失配置文件时，系统 SHALL 使用环境变量和代码默认值继续启动；发现非法配置文件时，系统 SHALL fail fast 并返回可读错误。

@@ -94,6 +94,7 @@ Subagent orchestration SHALL reuse the persistence discipline of `agent/subagent
 - **GIVEN** 一个不基于 `SubAgentManager` 的交互式编排（群聊轮次编排器）
 - **WHEN** 它维护自己的房间日志与轮次状态
 - **THEN** 该行为 SHALL NOT 被判定为「引入独立控制面」的违规
+
 ### Requirement: 声明式 Workflow DSL
 
 系统 SHALL 提供声明式 Workflow DSL，使模型能一次性声明协作拓扑（并行 / 汇合 / 条件分支 / 有限循环），并可退回逐工具自由调度。DSL SHALL 采用分离式入口：`DeclareWorkflow` 声明并返回 workflow_id，`StartWorkflow` 启动，`GetWorkflow` 查询 bounded 状态，`CancelWorkflow` 取消；`RunWorkflow` 为便捷语法，内部走 Declare+Start。
@@ -1352,6 +1353,7 @@ foreach 节点的 `source` SHALL 支持跨层递归解析（沿数据边向上�
 - **AND** 全部成员状态 SHALL 为 `idle`
 - **AND** 该通知 SHALL NOT 产生 `RoundResult`、SHALL NOT 被解释为新增的轮次出口
 - **AND** `single` 取消 SHALL NOT 写房间日志；`unlimited` 链因断线取消 SHALL 在房间日志写 `system`「讨论因页面断开而中止」并 SHALL 尽力发布 `discussion_ended`（`reason = "cancelled"`）；意外异常（`error`）SHALL NOT 写房间日志
+
 ### Requirement: 成员运行状态可观测性
 
 群聊编排器 SHALL 为每个房间成员维护一个可观测的运行状态，状态枚举 SHALL 为 `idle`（空闲）/ `running`（运行中兜底）/ `thinking`（LLM 调用在途）/ `typing`（已收到可见流式增量）/ `tool`（工具执行中），优先级 SHALL 为 `tool > typing > thinking > running > idle`。状态 SHALL 仅由真实运行事件驱动，SHALL NOT 由定时器、轮询或推测推进。状态变化 SHALL 通过房间级 `member_status` 事件发布：该事件 SHALL 携带房间级单调递增的 `status_seq` 与当前**完整的非空闲状态表** `statuses`（每项含 `persona_id` / `phase` / `tools` / `tool_count`），缺失成员 SHALL 视为 `idle`。短窗口内的多次变化 MAY 被合并为一次携带最新完整表的 `member_status`（跳过的中间序号不表示状态回退）；最终状态 SHALL 与 `room_state` 快照一致。系统 SHALL NOT 把 token 级 `assistant_delta` / `reasoning_delta` 内容转发到房间级事件。`tool` 状态 SHALL 按工具调用 id 记账，支持并发工具与同名工具，并在集合清空后回落 `running`；新一次 LLM 调用开始（`before_iteration`）SHALL 清空上一批在途工具，避免异常路径残留。终态事件 `member_post` / `member_silent` / `member_failed` / `round_ended` SHALL 权威地把对应成员（或全房间）重置为 `idle`，SHALL 携带**重置后**的 `status_seq`；成员已处于 `idle` / 表为空时，重置 SHALL NOT 递增序号或产生额外状态事件（幂等），此时终态事件 SHALL 携带当前 `status_seq`；`member_failed` SHALL 携带成员显示名 `name`。

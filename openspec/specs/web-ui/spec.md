@@ -1763,6 +1763,7 @@ Web UI SHALL 提供以下管理入口：创建/改名/改指令/改模型/删除
 - **WHEN** 用户在房间设置中把讨论模式改为 `unlimited`
 - **THEN** 系统 SHALL 持久化 `discussion_mode = unlimited`
 - **AND** 该房间后续用户消息 SHALL 开启讨论链
+
 ### Requirement: 内部会话的生命周期保护
 
 Web UI SHALL NOT 把人设单聊会话与群内会话作为普通会话展示在会话列表；且 SHALL NOT 允许任何会销毁内部会话底座的路径（会话删除接口、WS `reset`）直接作用于它们——删除 SHALL 只能经人设/房间接口进行。内部会话 id SHALL 使用可判定的前缀约定（`persona-` / `room-`），使 hub 过滤与保护判定不依赖读取会话快照。
