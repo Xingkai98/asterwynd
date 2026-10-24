@@ -282,6 +282,11 @@ class TeamConfig:
     ``turn_timeout_seconds`` 是群聊单轮成员 run 的超时（与参照
     ``ROOM_REPLY_TIMEOUT_MS = 240_000`` 同量级）；轮次上限的额度参数与参照
     ``groups.js:24-27`` 同值。
+
+    三个 ``discussion_*`` 是讨论链（``discussion_mode = unlimited``）的安全阀
+    （change ``group-unlimited-discussion``，design Decision 6）：最大轮数 / 最大
+    成员回合数 / 最大墙钟秒数，缺省取用户拍板的 10 倍档（200 / 600 / 6000）。
+    链启动时快照；单轮模式不使用这三个参数。
     """
     max_sessions: int = 50
     turn_timeout_seconds: float = 240.0
@@ -289,6 +294,9 @@ class TeamConfig:
     admin_extra_turns: int = 4
     turns_each: int = 2
     admin_turns_each: int = 4
+    discussion_max_rounds: int = 200
+    discussion_max_turns: int = 600
+    discussion_max_seconds: float = 6000.0
 
 
 @dataclass(frozen=True)
@@ -1679,7 +1687,9 @@ def _parse_team_config(raw: Any, path: Path) -> TeamConfig:
 
     ``team.max_sessions`` 是内部会话数上限（Q4 拍板缺省 50，可配置）；达到上限时
     新建**排队**，不拒绝。其余四项与参照 ``groups.js:24-27`` 同值，改动它们只影响
-    轮次预算，不影响终止语义（三出口）。
+    轮次预算，不影响终止语义（三出口）。三个 ``discussion_*`` 是讨论链安全阀
+    （change ``group-unlimited-discussion``）：只作用于 ``discussion_mode =
+    unlimited``，单轮模式不使用。
     """
     mapping = _expect_mapping(raw, path, "team")
     timeout_raw = mapping.get("turn_timeout_seconds", 240.0)
@@ -1709,6 +1719,23 @@ def _parse_team_config(raw: Any, path: Path) -> TeamConfig:
         ),
         admin_turns_each=_parse_timeout_seconds(
             mapping.get("admin_turns_each", 4), "team.admin_turns_each", path=path
+        ),
+        # 讨论链安全阀（change group-unlimited-discussion，design Decision 6）：
+        # 与 ``turn_timeout_seconds`` 同形的 fail fast（正整数 / 正数，显式拒 bool）。
+        discussion_max_rounds=_parse_timeout_seconds(
+            mapping.get("discussion_max_rounds", 200),
+            "team.discussion_max_rounds",
+            path=path,
+        ),
+        discussion_max_turns=_parse_timeout_seconds(
+            mapping.get("discussion_max_turns", 600),
+            "team.discussion_max_turns",
+            path=path,
+        ),
+        discussion_max_seconds=_parse_positive_float(
+            mapping.get("discussion_max_seconds", 6000.0),
+            "team.discussion_max_seconds",
+            path=path,
         ),
     )
 

@@ -130,6 +130,32 @@ async def _room_handshake(
         lock.release()
 
 
+def _discussion_snapshot(orchestrator, room_id: str) -> dict:
+    """读取编排器的讨论链快照（`discussion_round` / `discussion_reason` 的来源）。
+
+    ``RoomOrchestrator.discussion_snapshot(room_id)`` 由 agent 层（change
+    group-unlimited-discussion）提供，返回 ``{"round": int, "reason": str | None}``
+    （1-based 当前链轮序号，无链/single 恒 0）。这里按 getattr 容错：agent 层
+    尚未落地时等价于「无链」（0 / None）；返回值同时容忍 dict 与 2 元组两种形态。
+    """
+    getter = getattr(orchestrator, "discussion_snapshot", None)
+    if not callable(getter):
+        return {"round": 0, "reason": None}
+    try:
+        raw = getter(room_id)
+    except Exception:  # noqa: BLE001 - 快照读取失败不得打断房间 WS 握手
+        logger.debug("讨论链快照读取失败 room=%s", room_id, exc_info=True)
+        return {"round": 0, "reason": None}
+    if isinstance(raw, dict):
+        return {
+            "round": int(raw.get("round") or 0),
+            "reason": raw.get("reason") or None,
+        }
+    if isinstance(raw, (list, tuple)) and len(raw) == 2:
+        return {"round": int(raw[0] or 0), "reason": raw[1] or None}
+    return {"round": 0, "reason": None}
+
+
 def create_app(
     llm,
     mode: str | None = None,
@@ -494,6 +520,9 @@ def create_app(
             "admin": room.admin,
             "notice": room.notice,
             "reply_mode": room.reply_mode,
+            # 讨论模式（change group-unlimited-discussion, Decision 1）：旧房间记录
+            # 缺字段由 ``Room.from_dict`` 按 ``single`` 读。
+            "discussion_mode": room.discussion_mode,
         }
 
     def _team_state(ws_path) -> dict:
@@ -590,6 +619,7 @@ def create_app(
                 notice=str(payload.get("notice") or ""),
                 created_by=payload.get("created_by") or None,
                 reply_mode=payload.get("reply_mode"),
+                discussion_mode=payload.get("discussion_mode"),
             )
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
@@ -602,7 +632,8 @@ def create_app(
         except ValueError:
             return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
         fields = {k: payload[k] for k in
-                  ("name", "notice", "admin", "members", "reply_mode") if k in payload}
+                  ("name", "notice", "admin", "members", "reply_mode",
+                   "discussion_mode") if k in payload}
         try:
             room = team_service.update_room(ws_path, room_id, **fields)
         except KeyError:
@@ -660,6 +691,27 @@ def create_app(
             "timeline": team_service.room_timeline(ws_path, room_id),
         }
 
+    @app.post("/api/team/rooms/{room_id}/discussion/stop")
+    async def api_stop_discussion(
+        room_id: str, payload: dict | None = None, workspace: str | None = None,
+    ):
+        """优雅停止该房间的讨论链（Decision 5；WS 未连通时的 REST 降级通道）。
+
+        响应 ``{"stopping": bool, "room_id": ...}``：无活动链 / 链已 closing /
+        ``single`` 房间 → ``False``（幂等 no-op）；首次请求置位 → ``True``。
+        未知房间 → 404，workspace 未授权 → 403（与既有群聊端点同口径）。
+        """
+        body = payload or {}
+        try:
+            ws_path = _team_workspace(body.get("workspace") or workspace)
+        except ValueError:
+            return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        try:
+            stopping = await team_service.stop_discussion(ws_path, room_id)
+        except KeyError:
+            return JSONResponse({"error": "unknown_room"}, status_code=404)
+        return {"stopping": bool(stopping), "room_id": room_id}
+
     @app.websocket("/ws/room/{room_id}")
     async def room_websocket(ws: WebSocket, room_id: str):
         """房间级 WS：订阅该房间的成员输出（现有 WS 路由按 session 绑定，不适用）。"""
@@ -690,6 +742,7 @@ def create_app(
         try:
             def _build_room_state() -> dict:
                 member_statuses, status_seq = orchestrator.status_snapshot(room_id)
+                discussion = _discussion_snapshot(orchestrator, room_id)
                 return {
                     "type": "room_state",
                     "data": {
@@ -698,6 +751,10 @@ def create_app(
                         "members": team_service.room_members(ws_path, room_id),
                         "timeline": team_service.room_timeline(ws_path, room_id),
                         "round_active": orchestrator.is_round_active(room_id),
+                        # 讨论链状态（Decision 7）：刷新/重连据此恢复「讨论中（第 k 轮）」
+                        # 或最近一次终态文案；不新增 `discussion_active`。
+                        "discussion_round": discussion["round"],
+                        "discussion_reason": discussion["reason"],
                         "member_statuses": member_statuses,
                         "status_seq": status_seq,
                     },
@@ -736,6 +793,16 @@ def create_app(
                     )
                     rounds.add(task)
                     task.add_done_callback(rounds.discard)
+                elif msg_type == "stop_discussion":
+                    # 优雅停止（Decision 5，前端主路径）：不打断在跑回合，由编排器
+                    # 在回合结束后收尾；无活动链 / single 房间是幂等 no-op。
+                    # 停止是尽力而为的控制面消息，失败 SHALL NOT 摘掉连接。
+                    try:
+                        await team_service.stop_discussion(ws_path, room_id)
+                    except Exception:  # noqa: BLE001 - 控制面失败不影响实时通道
+                        logger.exception(
+                            "room stop_discussion failed: %s", room_id
+                        )
                 elif msg_type == "ping":
                     await send({"type": "pong"})
         except WebSocketDisconnect:

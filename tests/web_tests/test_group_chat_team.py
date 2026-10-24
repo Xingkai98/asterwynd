@@ -23,7 +23,7 @@ from agent.team import paths
 from agent.team.memory_review import make_scope
 from tests.support.llm_harness import ScriptedLLM
 from web.session import SessionManager
-from web.team import TeamService, WebSessionRunner
+from web.team import TeamService, WebSessionRunner, _normalize_discussion_mode
 
 
 @pytest.fixture(autouse=True)
@@ -70,6 +70,18 @@ def _make_personas(service, workspace, names=("甲", "乙")):
         service.create_persona(workspace, name=name, instructions=f"你是{name}")
         for name in names
     ]
+
+
+class _FakeStopOrchestrator:
+    """``TeamService.stop_discussion`` 的注入替身（只实现 ``request_stop`` 面）。"""
+
+    def __init__(self, *, stopping: bool) -> None:
+        self.stopping = stopping
+        self.calls: list[str] = []
+
+    async def request_stop(self, room_id: str) -> bool:
+        self.calls.append(room_id)
+        return self.stopping
 
 
 class TestPersonaAndRoomCrud:
@@ -949,3 +961,177 @@ class TestProgressMapping:
         assert "assistant_delta" not in kinds
         assert "stream_complete" not in kinds
         assert "iteration_started" in kinds
+
+
+class TestDiscussionModeApi:
+    """Decision 1：`discussion_mode` 归一化 + **合并生效值**校验。
+
+    冲突语义以 design v4 为准：`unlimited` 仅与 `everyone` 合法；把
+    `reply_mode` 改成 `admin` 而房间仍是 `unlimited` 且本次未给 `single` → 400。
+    校验必须在任何字段写入之前，拒绝时房间配置保持原值。
+    """
+
+    def test_normalize_discussion_mode_helper(self):
+        assert _normalize_discussion_mode(None) == "single"
+        assert _normalize_discussion_mode("") == "single"
+        assert _normalize_discussion_mode(" single ") == "single"
+        assert _normalize_discussion_mode("unlimited") == "unlimited"
+        with pytest.raises(ValueError, match="invalid_discussion_mode"):
+            _normalize_discussion_mode("nope")
+
+    def test_invalid_discussion_mode_rejected_on_create_and_update(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        with pytest.raises(ValueError, match="invalid_discussion_mode"):
+            service.create_room(
+                ws, name="r", members=[a.id], discussion_mode="nope",
+            )
+        room = service.create_room(ws, name="ok", members=[a.id])
+        with pytest.raises(ValueError, match="invalid_discussion_mode"):
+            service.update_room(ws, room.id, discussion_mode="nope")
+
+    def test_unlimited_requires_everyone_on_create(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        # 缺省 reply_mode 是 admin
+        with pytest.raises(ValueError, match="discussion_mode_requires_everyone"):
+            service.create_room(
+                ws, name="r", members=[a.id], discussion_mode="unlimited",
+            )
+        with pytest.raises(ValueError, match="discussion_mode_requires_everyone"):
+            service.create_room(
+                ws, name="r2", members=[a.id], reply_mode="admin",
+                discussion_mode="unlimited",
+            )
+        # 拒绝后 SHALL NOT 留下半创建的房间
+        assert [room.name for room in service.list_rooms(ws)] == []
+
+    def test_everyone_unlimited_is_accepted(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        room = service.create_room(
+            ws, name="r", members=[a.id], reply_mode="everyone",
+            discussion_mode="unlimited",
+        )
+        assert getattr(room, "discussion_mode", "single") == "unlimited"
+        assert room.reply_mode == "everyone"
+
+    def test_default_discussion_mode_is_single(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        room = service.create_room(ws, name="r", members=[a.id])
+        assert getattr(room, "discussion_mode", "single") == "single"
+
+    def test_discussion_mode_persists_and_can_switch_back(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        room = service.create_room(
+            ws, name="r", members=[a.id], reply_mode="everyone",
+            discussion_mode="unlimited",
+        )
+        assert service.get_room(ws, room.id).discussion_mode == "unlimited"
+        service.update_room(ws, room.id, discussion_mode="single")
+        assert service.get_room(ws, room.id).discussion_mode == "single"
+
+    def test_update_reply_mode_to_admin_rejected_while_unlimited(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        room = service.create_room(
+            ws, name="r", members=[a.id], reply_mode="everyone",
+            discussion_mode="unlimited",
+        )
+        with pytest.raises(ValueError, match="discussion_mode_requires_everyone"):
+            service.update_room(ws, room.id, reply_mode="admin")
+        # 拒绝后两个字段都保持原值（不静默改写用户数据）
+        reloaded = service.get_room(ws, room.id)
+        assert reloaded.reply_mode == "everyone"
+        assert reloaded.discussion_mode == "unlimited"
+
+    def test_switch_to_admin_with_single_together_is_allowed(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        room = service.create_room(
+            ws, name="r", members=[a.id], reply_mode="everyone",
+            discussion_mode="unlimited",
+        )
+        updated = service.update_room(
+            ws, room.id, reply_mode="admin", discussion_mode="single",
+        )
+        assert updated.reply_mode == "admin"
+        assert updated.discussion_mode == "single"
+        assert service.get_room(ws, room.id).discussion_mode == "single"
+
+
+class TestDiscussionLimitsWiring:
+    """Decision 6：`TeamConfig` 的三档安全阀由 web 装配层注入编排器。"""
+
+    def test_team_config_limits_are_injected_into_orchestrator(self, tmp_path):
+        config = AsterwyndConfig(team=TeamConfig(
+            max_sessions=50,
+            discussion_max_rounds=3,
+            discussion_max_turns=7,
+            discussion_max_seconds=12.5,
+        ))
+        service = _service(tmp_path, config=config)
+        ws = service.team_for(None).workspace
+        orchestrator = service.team_for(ws).orchestrator
+        assert orchestrator._discussion_max_rounds == 3
+        assert orchestrator._discussion_max_turns == 7
+        assert orchestrator._discussion_max_seconds == 12.5
+
+
+class TestStopDiscussion:
+    """Decision 5：优雅停止的 service 入口（workspace 回落口径同发消息）。"""
+    @pytest.mark.asyncio
+    async def test_unknown_room_raises_key_error(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        with pytest.raises(KeyError):
+            await service.stop_discussion(ws, "r-nope")
+
+    @pytest.mark.asyncio
+    async def test_delegates_to_orchestrator_request_stop(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        room = service.create_room(ws, name="r", members=[a.id])
+        fake = _FakeStopOrchestrator(stopping=True)
+        service.team_for(ws).orchestrator = fake
+
+        assert await service.stop_discussion(ws, room.id) is True
+        # 幂等重试仍委托编排器（is_first 判重由编排器负责）
+        assert await service.stop_discussion(ws, room.id) is True
+        assert fake.calls == [room.id, room.id]
+
+    @pytest.mark.asyncio
+    async def test_workspace_falls_back_to_room_owner(self, tmp_path):
+        """请求 workspace 里没有该房间时，回落 `workspace_of_room`（与发消息同口径）。"""
+        service = _service(tmp_path)
+        primary = service.team_for(None).workspace
+        other = tmp_path / "ws2"
+        other.mkdir()
+        service.manager.register_workspace(other)
+        (a,) = _make_personas(service, other, names=("甲",))
+        room = service.create_room(other, name="r", members=[a.id])
+        fake = _FakeStopOrchestrator(stopping=True)
+        service.team_for(other).orchestrator = fake
+
+        assert await service.stop_discussion(primary, room.id) is True
+        assert fake.calls == [room.id]
+
+    @pytest.mark.asyncio
+    async def test_no_active_chain_is_idempotent_noop(self, tmp_path):
+        """真实编排器：无活动讨论链（含 single 房）停止 = 幂等 no-op 返回 False。"""
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        room = service.create_room(ws, name="r", members=[a.id])
+        assert await service.stop_discussion(ws, room.id) is False
+        assert await service.stop_discussion(ws, room.id) is False

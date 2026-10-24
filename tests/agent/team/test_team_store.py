@@ -186,3 +186,53 @@ class TestRoomPersistence:
         store.upsert_persona(p)
         store.set_persona_chat_session(p.id, "persona-xyz")
         assert _store(tmp_path).persona_chat_session(p.id) == "persona-xyz"
+
+
+class TestDiscussionMode:
+    """房间讨论模式（change group-unlimited-discussion，design Decision 1）。"""
+
+    def test_mode_constants(self):
+        from agent.team.models import DEFAULT_DISCUSSION_MODE, DISCUSSION_MODES
+
+        assert DISCUSSION_MODES == ("single", "unlimited")
+        assert DEFAULT_DISCUSSION_MODE == "single"
+
+    def test_room_defaults_to_single(self, tmp_path):
+        store = _store(tmp_path)
+        room = Room(name="r", members=[])
+        assert room.discussion_mode == "single"
+        store.save_room(room)
+        assert _store(tmp_path).get_room(room.id).discussion_mode == "single"
+
+    def test_discussion_mode_roundtrips(self, tmp_path):
+        store = _store(tmp_path)
+        room = Room(name="r", members=[], discussion_mode="unlimited")
+        store.save_room(room)
+        loaded = _store(tmp_path).get_room(room.id)
+        assert loaded.discussion_mode == "unlimited"
+        # 成对写入：序列化结果必须带该字段。
+        assert room.to_dict()["discussion_mode"] == "unlimited"
+
+    def test_legacy_room_record_without_discussion_mode_reads_as_single(self, tmp_path):
+        import json
+
+        store = _store(tmp_path)
+        room = Room(name="legacy", members=[])
+        store.save_room(room)
+        path = tmp_path / ".asterwynd" / "team" / "rooms" / f"{room.id}.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data.pop("discussion_mode", None) == "single"
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        assert _store(tmp_path).get_room(room.id).discussion_mode == "single"
+
+    def test_legacy_room_record_with_null_discussion_mode_reads_as_single(self, tmp_path):
+        import json
+
+        store = _store(tmp_path)
+        room = Room(name="legacy", members=[])
+        store.save_room(room)
+        path = tmp_path / ".asterwynd" / "team" / "rooms" / f"{room.id}.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["discussion_mode"] = None
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        assert _store(tmp_path).get_room(room.id).discussion_mode == "single"

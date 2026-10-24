@@ -24,6 +24,12 @@
     connectionEpoch: 0,
     statusText: '',
     statusKind: '',
+    // 讨论链（change group-unlimited-discussion）：当前链身份、轮次活跃与停止控件状态。
+    // chainId 只用于拒绝「迟到的旧链终态」；round_active 由 room_state / 链事件维护，
+    // 停止按钮可见性 = round_active && room.discussion_mode === 'unlimited'（纯函数推导）。
+    chainId: null,
+    roundActive: false,
+    stopPending: false,
     sidebarOpen: false,
     els: {},
   };
@@ -199,6 +205,12 @@
     state.statusStale = false;
   }
 
+  function resetDiscussionState() {
+    state.chainId = null;
+    state.roundActive = false;
+    state.stopPending = false;
+  }
+
   function closeRoom() {
     closeSidebar();
     if (state.ws) {
@@ -211,6 +223,8 @@
     state.members = [];
     state.timeline = [];
     resetStatusState();
+    resetDiscussionState();
+    updateStopButton();
     setStatus('', '');
     const room = el('group-room');
     if (room) room.hidden = true;
@@ -231,6 +245,7 @@
     state.members = stateBody.members || [];
     state.timeline = stateBody.timeline || [];
     resetStatusState();
+    resetDiscussionState();
     closeSidebar();
     el('group-room').hidden = false;
     el('group-empty').hidden = true;
@@ -327,6 +342,72 @@
     if (state.statusKind === 'op') setStatus('', '');
   }
 
+  // ------------------------------------------------------------ 讨论链
+
+  function isUnlimitedRoom() {
+    return Boolean(state.activeRoom && state.activeRoom.discussion_mode === 'unlimited');
+  }
+
+  function stopSnapshot() {
+    return { round_active: state.roundActive, room: state.activeRoom || {} };
+  }
+
+  function updateStopButton() {
+    const button = el('group-room-stop');
+    if (!button) return;
+    const visible = Status
+      ? Status.shouldShowStop(stopSnapshot())
+      : (state.roundActive && isUnlimitedRoom());
+    button.hidden = !visible;
+    button.disabled = state.stopPending;
+    button.textContent = state.stopPending ? '正在停止…' : '停止讨论';
+    if (visible) button.setAttribute('aria-busy', state.stopPending ? 'true' : 'false');
+    else button.removeAttribute('aria-busy');
+  }
+
+  function chainEventAllowed(data) {
+    return Status ? Status.shouldApplyChainEvent(state.chainId, data) : true;
+  }
+
+  function adoptChain(chainId) {
+    if (chainId == null || chainId === '') return;
+    state.chainId = chainId;
+  }
+
+  // 「讨论中（第 k 轮）」与链终态共用 statusKind='discussion'：与 single 的
+  // 'round' 区分开，避免 member_status 的既有清理逻辑把讨论进度擦掉。
+  function setDiscussionStatus(text) {
+    if (text) setStatus(text, 'discussion');
+  }
+
+  function stopDiscussion() {
+    if (!state.activeRoom || state.stopPending) return;
+    if (!Status || !Status.shouldShowStop(stopSnapshot())) return;
+    state.stopPending = true;
+    updateStopButton();
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      // 主路径：房间 WS 消息（后端 request_stop 的幂等优雅停止）。
+      state.ws.send(JSON.stringify({ type: 'stop_discussion' }));
+      return;
+    }
+    // WS 未连通 → REST 降级（POST /api/team/rooms/{id}/discussion/stop）。
+    api(withWorkspace(`/api/team/rooms/${state.activeRoom.id}/discussion/stop`), {
+      method: 'POST',
+      body: JSON.stringify({ workspace: workspaceParam() }),
+    }).then(body => {
+      // stopping=true：等 round_ended(stopped)/discussion_ended(stopped) 收尾；
+      // stopping=false：没有活动链（幂等 no-op），不会再有事件，立刻恢复控件。
+      if (body && body.stopping) return;
+      state.stopPending = false;
+      state.roundActive = false;
+      updateStopButton();
+    }).catch(err => {
+      state.stopPending = false;
+      updateStopButton();
+      setStatus(`停止失败：${err.message}`, 'op');
+    });
+  }
+
   function handleRoomEvent(event) {
     const data = event.data || {};
     const prev = statusSnapshot();
@@ -343,6 +424,22 @@
           resetStatusState();
         }
         state.statusStale = false;
+        // 链身份在新连接/快照里未知：清空并等后续链事件认链（迟到旧链事件由守卫拦截）。
+        state.chainId = null;
+        state.stopPending = false;
+        state.roundActive = data.round_active === true;
+        // 刷新/重连恢复：discussion_round 恢复「讨论中（第 k 轮）」，
+        // discussion_reason 恢复最近一次链终态；single 房不恢复讨论文案。
+        const snapshotRoom = data.room || {};
+        if (snapshotRoom.discussion_mode === 'unlimited') {
+          const round = Number(data.discussion_round) || 0;
+          const reason = data.discussion_reason || null;
+          if (state.roundActive && round > 0) {
+            setDiscussionStatus(`讨论中（第 ${round} 轮）`);
+          } else if (reason) {
+            setDiscussionStatus(Status ? Status.describeDiscussionEnd(reason) : null);
+          }
+        }
         renderRoom();
         break;
       }
@@ -416,21 +513,26 @@
         break;
       }
       case 'round_ended': {
+        if (!chainEventAllowed(data)) break;
+        adoptChain(data.chain_id);
+        // 讨论链扩展字段（chain_id / round_index / chain_continues）存在即视为链事件；
+        // single 的 round_ended 四键不变，走既有文案与清理时机。
+        const chainRound = data.chain_id != null || data.chain_continues != null;
+        if (chainRound) {
+          state.roundActive = data.chain_continues === true;
+        } else {
+          state.roundActive = false;
+        }
         if (Status) {
           const result = Status.applyTerminal(prev, data);
           if (result.applied) {
             state.statuses = result.state.statuses;
             state.statusSeq = result.state.seq;
-            const text = data.termination === 'limit'
-              ? '本轮因达上限结束'
-              : data.termination === 'cancelled'
-                ? '本轮已中止'
-                : data.termination === 'error'
-                  ? '本轮异常结束'
-                  : '本轮结束';
-            setStatus(text, 'round');
+            const text = Status.describeRoundEnd(data);
+            if (text) setStatus(text, chainRound ? 'discussion' : 'round');
           }
         }
+        updateStopButton();
         // 迟到终态即使不改状态，limit 的 system 条目仍需重拉；响应应用前校验房间。
         if (data.termination === 'limit') {
           const roomId = state.activeRoom && state.activeRoom.id;
@@ -451,6 +553,49 @@
         renderMemberPresence();
         break;
       }
+      case 'discussion_started': {
+        // 链起点不设 chain_id 守卫：新链必须能认领；此后旧链迟到事件才被新链 id 挡住。
+        adoptChain(data.chain_id);
+        if (data.discussion_mode && state.activeRoom) {
+          state.activeRoom.discussion_mode = data.discussion_mode;
+        }
+        state.roundActive = true;
+        state.stopPending = false;
+        const roundIndex = Number(data.round_index) || 1;
+        setDiscussionStatus(`讨论中（第 ${roundIndex} 轮）`);
+        updateStopButton();
+        break;
+      }
+      case 'system_entry': {
+        // 链内 system 条目实时追加（按 seq 去重，与时间线合并口径一致）。
+        if (!chainEventAllowed(data)) break;
+        adoptChain(data.chain_id);
+        appendTimeline({
+          seq: data.seq != null ? Number(data.seq) : null,
+          speaker: null,
+          kind: 'system',
+          text: String(data.text || ''),
+          ts: '',
+        });
+        renderTimeline();
+        break;
+      }
+      case 'discussion_stop_requested': {
+        if (!chainEventAllowed(data)) break;
+        adoptChain(data.chain_id);
+        state.stopPending = true;
+        updateStopButton();
+        break;
+      }
+      case 'discussion_ended': {
+        if (!chainEventAllowed(data)) break;
+        adoptChain(data.chain_id);
+        state.roundActive = false;
+        state.stopPending = false;
+        setDiscussionStatus(Status ? Status.describeDiscussionEnd(data.reason) : null);
+        updateStopButton();
+        break;
+      }
       default:
         break;
     }
@@ -466,6 +611,7 @@
     }
     renderMemberPresence();
     renderTimeline();
+    updateStopButton();
   }
 
   function renderMemberPresence(focusActive) {
@@ -621,8 +767,11 @@
           const option = document.createElement('option');
           option.value = opt.value;
           option.textContent = opt.label;
+          // option.disabled：不可用选项（例如 admin 应答模式下的 unlimited 讨论模式）。
+          if (opt.disabled) option.disabled = true;
           input.appendChild(option);
         });
+        if (field.value != null) input.value = String(field.value);
       } else if (field.type === 'members') {
         input = document.createElement('div');
         input.className = 'group-member-picker';
@@ -649,6 +798,12 @@
       if (field.type !== 'members') input.id = `group-field-${field.name}`;
       inputs[field.name] = input;
       label.appendChild(input);
+      if (field.hint !== undefined) {
+        const hint = document.createElement('div');
+        hint.className = 'group-field-hint';
+        hint.textContent = field.hint;
+        label.appendChild(hint);
+      }
       form.appendChild(label);
     });
     const error = document.createElement('div');
@@ -686,6 +841,7 @@
     dialog.appendChild(form);
     dialog.hidden = false;
     scrim.hidden = false;
+    return inputs;
   }
 
   function closeDialog() {
@@ -732,11 +888,28 @@
     });
   }
 
+  function roomDialogError(err) {
+    const raw = err && err.message ? String(err.message) : '';
+    const known = {
+      discussion_mode_requires_everyone:
+        '仅 everyone 应答模式可以选择无限讨论；请先把「应答模式」设为 everyone 并保存，再修改讨论模式。',
+      invalid_discussion_mode: '讨论模式取值非法，请选择 single（单轮）或 unlimited（无限讨论）。',
+    };
+    return new Error(known[raw] || raw || '保存失败');
+  }
+
+  function discussionModeHint(replyMode) {
+    if (replyMode === 'everyone') return '';
+    return '无限讨论仅在 everyone 应答模式可用：把上方「应答模式」切换为 everyone 后'
+      + '即可立即选择（无需先保存）。';
+  }
+
   function openRoomDialog(room) {
     const isNew = !room;
     const memberOptions = state.personas.map(p => ({ value: p.id, label: p.name || p.id }));
     const adminOptions = [{ value: '', label: '（无）' }].concat(memberOptions);
-    openDialog(isNew ? '新建群聊' : `设置群聊：${room.name}`, [
+    const replyMode = room ? room.reply_mode : 'admin';
+    const inputs = openDialog(isNew ? '新建群聊' : `设置群聊：${room.name}`, [
       { name: 'name', label: '名称', value: room ? room.name : '' },
       { name: 'notice', label: '群公告（每名成员发言前注入）', type: 'textarea', value: room ? room.notice : '' },
       {
@@ -747,6 +920,15 @@
           { value: 'everyone', label: 'everyone（无 @ 时全体成员按序各得一次机会）' },
         ],
       },
+      {
+        name: 'discussion_mode', label: '讨论模式', type: 'select',
+        value: room && room.discussion_mode ? room.discussion_mode : 'single',
+        hint: discussionModeHint(replyMode),
+        options: [
+          { value: 'single', label: 'single（单轮，默认）' },
+          { value: 'unlimited', label: 'unlimited（无限讨论）' },
+        ],
+      },
       { name: 'members', label: '成员', type: 'members', options: memberOptions, value: room ? room.members : [] },
       { name: 'admin', label: '房间 admin（默认应答者）', type: 'select', value: room ? (room.admin || '') : '', options: adminOptions },
     ], async (values) => {
@@ -755,14 +937,47 @@
         name: values.name,
         notice: values.notice,
         reply_mode: values.reply_mode,
+        discussion_mode: values.discussion_mode,
         members: values.members,
         admin: values.admin || null,
       };
-      const body = room
-        ? await api(`/api/team/rooms/${room.id}`, { method: 'PATCH', body: JSON.stringify(payload) })
-        : await api('/api/team/rooms', { method: 'POST', body: JSON.stringify(payload) });
-      applyState(body);
+      try {
+        const body = room
+          ? await api(`/api/team/rooms/${room.id}`, { method: 'PATCH', body: JSON.stringify(payload) })
+          : await api('/api/team/rooms', { method: 'POST', body: JSON.stringify(payload) });
+        applyState(body);
+      } catch (err) {
+        // 结构化错误必须如实展示（spec：SHALL NOT 静默丢弃）。
+        throw roomDialogError(err);
+      }
     });
+
+    // 讨论模式可用性随「应答模式」选择即时联动：同一对话框内切到 everyone 立即可选，
+    // 切回 admin 立即置灰并把已选 unlimited 复位为 single；服务端仍按合并后的生效值
+    // 校验（400 兜底展示，见 roomDialogError）。
+    const discussionSelect = inputs.discussion_mode;
+    const unlimitedOption = discussionSelect.querySelector("option[value='unlimited']");
+    const discussionHint = discussionSelect
+      .closest('label')
+      .querySelector('.group-field-hint');
+    function syncDiscussionModeAvailability() {
+      const available = Status && Status.unlimitedDiscussionAvailable
+        ? Status.unlimitedDiscussionAvailable(inputs.reply_mode.value)
+        : inputs.reply_mode.value === 'everyone';
+      unlimitedOption.disabled = !available;
+      unlimitedOption.textContent = available
+        ? 'unlimited（无限讨论：成员自动连续多轮）'
+        : 'unlimited（无限讨论，仅 everyone 应答模式可用）';
+      if (!available && discussionSelect.value === 'unlimited') {
+        discussionSelect.value = 'single';
+      }
+      if (discussionHint) {
+        discussionHint.textContent = discussionModeHint(inputs.reply_mode.value);
+        discussionHint.hidden = discussionHint.textContent === '';
+      }
+    }
+    inputs.reply_mode.addEventListener('change', syncDiscussionModeAvailability);
+    syncDiscussionModeAvailability();
   }
 
   // ---------------------------------------------------------------- 绑定
@@ -789,6 +1004,8 @@
         }
       });
     }
+    const stop = el('group-room-stop');
+    if (stop) stop.addEventListener('click', stopDiscussion);
     const edit = el('group-room-edit');
     if (edit) edit.addEventListener('click', () => {
       if (state.activeRoom) {

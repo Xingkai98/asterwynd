@@ -2182,6 +2182,7 @@ main { flex: 1; min-height: 0; overflow: hidden; }
 .group-member-picker { display: flex; flex-wrap: wrap; gap: 8px; }
 .group-member-option { display: flex; flex-direction: row; align-items: center; gap: 4px; font-size: 13px; }
 .group-dialog-error { color: #d9534f; font-size: 12px; min-height: 16px; }
+.group-field-hint { color: var(--muted, #888); font-size: 11px; line-height: 1.35; }
 .group-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* ---- 群聊成员状态（change web-agent-group-member-status） ---- */
@@ -2272,6 +2273,9 @@ main { flex: 1; min-height: 0; overflow: hidden; }
 .group-presence-row.phase-typing .group-presence-status { color: var(--success); }
 .group-presence-row.phase-tool .group-presence-status { color: var(--warning); }
 .group-room-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+/* 讨论链停止控件（change group-unlimited-discussion）：跟随次要动作区，390px 下靠 wrap 换行。 */
+.group-room-stop { font-size: 12px; padding: 2px 8px; white-space: nowrap; }
+.group-room-stop:disabled { opacity: 0.55; cursor: default; }
 .group-drawer-toggle { display: none; }
 .group-empty-drawer { display: none; }
 .group-sidebar-scrim {

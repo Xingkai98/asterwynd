@@ -22,8 +22,10 @@ from agent.team import paths
 from agent.team.memory_review import MemoryReviewService, MemoryReviewer, make_scope
 from agent.run_config import parse_agent_mode
 from agent.team.models import (
+    DEFAULT_DISCUSSION_MODE,
     DEFAULT_PERSONA_MODE,
     DEFAULT_REPLY_MODE,
+    DISCUSSION_MODES,
     REPLY_MODES,
     Persona,
     Room,
@@ -81,6 +83,25 @@ def _normalize_reply_mode(raw) -> str:
     if text not in REPLY_MODES:
         raise ValueError("invalid_reply_mode")
     return text
+
+
+# ---------------------------------------------------------------------------
+# 房间讨论模式（change group-unlimited-discussion，Decision 1 / 5）
+# ---------------------------------------------------------------------------
+
+
+def _normalize_discussion_mode(raw) -> str:
+    """房间讨论模式：非法值结构化拒绝（``ValueError``，Decision 1）。"""
+    text = str(raw or "").strip() or DEFAULT_DISCUSSION_MODE
+    if text not in DISCUSSION_MODES:
+        raise ValueError("invalid_discussion_mode")
+    return text
+
+
+def _check_discussion_mode_pair(*, reply_mode: str, discussion_mode: str) -> None:
+    """``unlimited`` 仅与 ``everyone`` 合法（按**合并后的生效值**校验，Decision 1）。"""
+    if discussion_mode == "unlimited" and reply_mode != "everyone":
+        raise ValueError("discussion_mode_requires_everyone")
 
 
 class RoomEventBus:
@@ -198,17 +219,23 @@ class _WorkspaceTeam:
         if service.llm is not None:
             self.review.build_llm_parts(service.llm)
         self.pool = TeamSessionPool(max_sessions=service.config.team.max_sessions)
+        team_config = service.config.team
         self.orchestrator = RoomOrchestrator(
             store=self.store,
             resolver=_WorkspaceResolver(service, self),
             runner=_WorkspaceRunner(service, self),
-            turn_timeout=service.config.team.turn_timeout_seconds,
-            extra_turns=service.config.team.extra_turns,
-            admin_extra_turns=service.config.team.admin_extra_turns,
-            turns_each=service.config.team.turns_each,
-            admin_turns_each=service.config.team.admin_turns_each,
+            turn_timeout=team_config.turn_timeout_seconds,
+            extra_turns=team_config.extra_turns,
+            admin_extra_turns=team_config.admin_extra_turns,
+            turns_each=team_config.turns_each,
+            admin_turns_each=team_config.admin_turns_each,
             review_sink=self.review,
             on_event=service.event_sink,
+            # 讨论链安全阀（Decision 6）：配置在 Web 启动期解析一次、
+            # 链启动时快照；改 YAML 需重启进程。
+            discussion_max_rounds=team_config.discussion_max_rounds,
+            discussion_max_turns=team_config.discussion_max_turns,
+            discussion_max_seconds=team_config.discussion_max_seconds,
         )
 
 
@@ -481,6 +508,25 @@ class TeamService:
             team = self.team_for(discovered)
         return await team.orchestrator.submit_user_message(room_id, text)
 
+    async def stop_discussion(
+        self, workspace: str | Path | None, room_id: str
+    ) -> bool:
+        """请求优雅停止该房间的讨论链（Decision 5）。
+
+        workspace 口径与 :meth:`submit_room_message` 一致：先按传入 workspace
+        找房间，找不到回落 ``workspace_of_room``，仍无 → ``KeyError``（REST 404）。
+        返回值来自编排器 ``request_stop``：无活动链 / 链已 closing / ``single``
+        房间 → ``False``（幂等 no-op）；首次请求置位并返回 ``True``，重复请求
+        仍返回 ``True`` 但不重复发事件（判重由编排器负责）。
+        """
+        team = self.team_for(workspace)
+        if team.store.get_room(room_id) is None:
+            discovered = self.workspace_of_room(room_id)
+            if discovered is None:
+                raise KeyError(f"unknown room: {room_id}")
+            team = self.team_for(discovered)
+        return bool(await team.orchestrator.request_stop(room_id))
+
     async def adopt_internal_session(
         self, session_id: str, workspace: str | Path | None = None
     ) -> bool:
@@ -627,10 +673,19 @@ class TeamService:
     def create_room(
         self, workspace, *, name: str, members: list[str], admin: str | None = None,
         notice: str = "", created_by: str | None = None, reply_mode: str | None = None,
+        discussion_mode: str | None = None,
     ) -> Room:
         team = self.team_for(workspace)
         if not (name or "").strip():
             raise ValueError("missing_name")
+        # 应答模式与讨论模式按**合并后的生效值**校验（Decision 1）：
+        # ``unlimited`` 仅与 ``everyone`` 合法，非法组合不得留下半创建的房间。
+        effective_reply_mode = _normalize_reply_mode(reply_mode)
+        effective_discussion_mode = _normalize_discussion_mode(discussion_mode)
+        _check_discussion_mode_pair(
+            reply_mode=effective_reply_mode,
+            discussion_mode=effective_discussion_mode,
+        )
         known = {p.id for p in team.store.list_personas()}
         unknown = [m for m in members if m not in known]
         if unknown:
@@ -645,7 +700,8 @@ class TeamService:
         room = Room(
             name=name.strip(), members=list(dict.fromkeys(members)),
             admin=resolved_admin, notice=notice or "", created_by=created_by,
-            reply_mode=_normalize_reply_mode(reply_mode),
+            reply_mode=effective_reply_mode,
+            discussion_mode=effective_discussion_mode,
         )
         team.store.save_room(room)
         return room
@@ -655,12 +711,27 @@ class TeamService:
         room = team.store.get_room(room_id)
         if room is None:
             raise KeyError(room_id)
+        # 合并生效值校验**先于任何字段写入**：只把 reply_mode 改成 admin 而房间仍
+        # 是 unlimited 且本次未给 single ⇒ 结构化拒绝，且两字段保持原值（Decision 1）。
+        merged_reply_mode = (
+            _normalize_reply_mode(fields["reply_mode"])
+            if fields.get("reply_mode") is not None else room.reply_mode
+        )
+        merged_discussion_mode = (
+            _normalize_discussion_mode(fields["discussion_mode"])
+            if fields.get("discussion_mode") is not None
+            else (room.discussion_mode or DEFAULT_DISCUSSION_MODE)
+        )
+        _check_discussion_mode_pair(
+            reply_mode=merged_reply_mode,
+            discussion_mode=merged_discussion_mode,
+        )
         if fields.get("name"):
             room.name = str(fields["name"])
         if fields.get("notice") is not None:
             room.notice = str(fields.get("notice") or "")
-        if fields.get("reply_mode") is not None:
-            room.reply_mode = _normalize_reply_mode(fields["reply_mode"])
+        room.reply_mode = merged_reply_mode
+        room.discussion_mode = merged_discussion_mode
         # ``"admin" in fields``（而非 ``is not None``）：前端「（无）」发的是显式
         # ``null``，用 ``is not None`` 会把它静默丢弃 ⇒ 用户以为改成了「无」，
         # 房间实际仍由原 admin 应答（I4）。
