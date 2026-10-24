@@ -1004,3 +1004,76 @@ def test_allowed_write_paths_strips_surrounding_whitespace(tmp_path, monkeypatch
     )
     config = load_config(start_dir=tmp_path)
     assert config.tools.allowed_write_paths == (entry.strip(),)
+
+
+# ---------------------------------------------------------------------------
+# 群聊讨论链安全阀（change group-unlimited-discussion，design Decision 6）
+# ---------------------------------------------------------------------------
+
+
+def test_team_discussion_limits_default_when_absent(tmp_path, monkeypatch):
+    """三个安全阀缺省取用户拍板的 10 倍档：200 轮 / 600 回合 / 6000 秒。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    config = load_config(start_dir=tmp_path)
+    assert config.team.discussion_max_rounds == 200
+    assert config.team.discussion_max_turns == 600
+    assert config.team.discussion_max_seconds == 6000.0
+    assert isinstance(config.team.discussion_max_rounds, int)
+    assert isinstance(config.team.discussion_max_turns, int)
+    assert isinstance(config.team.discussion_max_seconds, float)
+
+
+def test_team_discussion_limits_parse_overrides(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+team:
+  discussion_max_rounds: 3
+  discussion_max_turns: 7
+  discussion_max_seconds: 12.5
+""",
+        encoding="utf-8",
+    )
+    config = load_config(start_dir=tmp_path)
+    assert config.team.discussion_max_rounds == 3
+    assert config.team.discussion_max_turns == 7
+    assert config.team.discussion_max_seconds == 12.5
+
+
+def test_team_discussion_limits_accept_integral_seconds(tmp_path, monkeypatch):
+    """YAML 整数秒也合法（``6000`` → ``6000.0``），与 ``turn_timeout_seconds`` 同形。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "team:\n  discussion_max_seconds: 7\n", encoding="utf-8"
+    )
+    config = load_config(start_dir=tmp_path)
+    assert config.team.discussion_max_seconds == 7.0
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("discussion_max_rounds", "0"),
+        ("discussion_max_rounds", "-1"),
+        ("discussion_max_rounds", "abc"),
+        ("discussion_max_rounds", "true"),
+        ("discussion_max_turns", "0"),
+        ("discussion_max_turns", "-1"),
+        ("discussion_max_turns", "abc"),
+        ("discussion_max_turns", "true"),
+        ("discussion_max_seconds", "0"),
+        ("discussion_max_seconds", "-1"),
+        ("discussion_max_seconds", "abc"),
+        ("discussion_max_seconds", "true"),
+    ],
+)
+def test_team_discussion_limits_reject_invalid_values(
+    tmp_path, monkeypatch, field, value
+):
+    """0 / 负数 / 非数值 / YAML bool 一律 fail fast（bool 漏过去会被当 1）。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        f"team:\n  {field}: {value}\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError, match=f"team.{field}"):
+        load_config(start_dir=tmp_path)

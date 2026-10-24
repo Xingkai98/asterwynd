@@ -116,6 +116,16 @@ benchmark:
   parallel: 1
   timeout_seconds: 600
 
+team:
+  # 群聊讨论链（房间 discussion_mode = unlimited）的安全阀，缺省取 10 倍档：
+  # 200 轮 / 600 成员回合 / 6000 秒。任一到达即停止整条讨论链并写 system 条目。
+  # 单轮模式（single）不使用这三个参数。配置在 Web 进程启动期解析一次，
+  # 改动需重启进程；链启动时快照，运行中改配置不影响已启动的链。
+  # 校验：正整数 / 正数；0、负数、字符串或 YAML 布尔值都会 fail fast（ConfigError）。
+  discussion_max_rounds: 200
+  discussion_max_turns: 600
+  discussion_max_seconds: 6000
+
 web:
   # Web UI（asterwynd web）允许操作的额外工作区路径（必须是绝对路径，~ 可展开）。
   # 主 workspace（启动目录或 --workspace）始终有效，不在这里重复列；列出的路径

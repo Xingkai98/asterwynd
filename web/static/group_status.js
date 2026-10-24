@@ -171,6 +171,86 @@
     return null;
   }
 
+  // ---------------------------------------------------------------- 讨论链
+  //
+  // change group-unlimited-discussion（design Decision 7 的事件契约）：
+  //   discussion_started      {room_id, chain_id, discussion_mode, members, round_index, limits}
+  //   system_entry            {room_id, chain_id, seq, text}
+  //   discussion_stop_requested {room_id, chain_id}
+  //   discussion_ended        {room_id, chain_id, reason, rounds, rounds_started, turns,
+  //                            elapsed_seconds, status_seq}
+  //   round_ended             扩展 {chain_id, round_index, chain_continues}，termination 增 stopped。
+  // 本文件只负责文案/可见性/链身份守卫的纯计算，DOM 与 WS 分发留在 group.js。
+
+  const ROUND_END_LABELS = {
+    limit: '本轮因达上限结束',
+    cancelled: '本轮已中止',
+    error: '本轮异常结束',
+  };
+
+  // 讨论链终态文案（与 web-ui spec delta 的状态文案表逐字对应）。
+  const DISCUSSION_END_LABELS = {
+    converged: '讨论已收敛',
+    stopped: '讨论已停止',
+    max_rounds: '讨论达安全上限',
+    max_turns: '讨论达安全上限',
+    max_seconds: '讨论达安全上限',
+    all_failed: '讨论已中止（本轮无人发言，存在失败）',
+    mode_changed: '讨论已结束（模式已变更）',
+    cancelled: '讨论已中止',
+    error: '讨论异常结束',
+    round_limit: '讨论因本轮达上限结束',
+    completed: '讨论已结束',
+  };
+
+  function isChainRoundEnd(data) {
+    return Boolean(data) &&
+      (data.chain_id != null || data.chain_continues != null);
+  }
+
+  function describeRoundEnd(data) {
+    const payload = data || {};
+    const termination = String(payload.termination || '');
+    if (!isChainRoundEnd(payload)) {
+      // single：既有四档文案逐字保持（completed / all_failed / 未知 → 本轮结束）。
+      return ROUND_END_LABELS[termination] || '本轮结束';
+    }
+    // unlimited 链的停止出口：必须是「讨论已停止」，绝不显示「本轮结束」。
+    if (termination === 'stopped') return '讨论已停止';
+    // 链继续：显示下一轮序号（round_ended 的 round_index 是刚结束的轮）。
+    if (payload.chain_continues === true) {
+      const round = Number(payload.round_index);
+      return Number.isFinite(round) && round > 0
+        ? `讨论中（第 ${round + 1} 轮）`
+        : '讨论继续中';
+    }
+    // 链即将结束：终态文案由紧随其后的 discussion_ended 给出（不抢文案）；
+    // 取消/异常链的 teardown 投递是尽力而为，先给中止提示避免状态悬空。
+    if (termination === 'cancelled') return '讨论已中止';
+    if (termination === 'error') return '讨论异常结束';
+    return null;
+  }
+
+  function describeDiscussionEnd(reason) {
+    return DISCUSSION_END_LABELS[String(reason || '')] || null;
+  }
+
+  function shouldShowStop(snapshot) {
+    const payload = snapshot || {};
+    const room = payload.room || {};
+    return Boolean(payload.round_active) && room.discussion_mode === 'unlimited';
+  }
+
+  function shouldApplyChainEvent(currentChainId, data) {
+    const payload = data || {};
+    // 不带 chain_id 的事件（single 模式 / 旧服务端 payload）一律兼容应用。
+    if (payload.chain_id == null || payload.chain_id === '') return true;
+    // 当前链未知（刚刷新/重连、错过 discussion_started）→ 接受并由事件认链；
+    // 只有「已知当前链」与事件链不一致时才丢弃，防止迟到的旧链终态覆盖新链。
+    if (currentChainId == null || currentChainId === '') return true;
+    return String(currentChainId) === String(payload.chain_id);
+  }
+
   window.AsterwyndGroupStatus = {
     PHASES,
     createStatusState,
@@ -181,5 +261,9 @@
     formatPhase,
     describeChange,
     mergeTimeline,
+    describeRoundEnd,
+    describeDiscussionEnd,
+    shouldShowStop,
+    shouldApplyChainEvent,
   };
 })();

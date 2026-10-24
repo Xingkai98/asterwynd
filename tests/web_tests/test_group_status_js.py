@@ -179,3 +179,113 @@ def test_merge_timeline_ignores_client_only_null_seq_entries():
     merged = call("mergeTimeline", [{"seq": None, "text": "synthetic"}],
                   [{"seq": 1, "text": "server"}])
     assert merged == [{"seq": 1, "text": "server"}]
+
+
+# ---------------------------------------------------------------- 讨论链
+# change group-unlimited-discussion（design Decision 7 / web-ui spec delta）：
+# describeRoundEnd / describeDiscussionEnd / shouldShowStop / shouldApplyChainEvent。
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("converged", "讨论已收敛"),
+        ("stopped", "讨论已停止"),
+        ("max_rounds", "讨论达安全上限"),
+        ("max_turns", "讨论达安全上限"),
+        ("max_seconds", "讨论达安全上限"),
+        ("all_failed", "讨论已中止（本轮无人发言，存在失败）"),
+        ("mode_changed", "讨论已结束（模式已变更）"),
+        ("cancelled", "讨论已中止"),
+        ("error", "讨论异常结束"),
+        ("round_limit", "讨论因本轮达上限结束"),
+        ("completed", "讨论已结束"),
+    ],
+)
+def test_describe_discussion_end_maps_every_reason(reason, expected):
+    assert call("describeDiscussionEnd", reason) == expected
+
+
+def test_describe_discussion_end_unknown_reason_is_none():
+    assert call("describeDiscussionEnd", "bogus") is None
+    assert call("describeDiscussionEnd", None) is None
+    assert call("describeDiscussionEnd", "") is None
+
+
+def test_describe_round_end_single_keeps_existing_four_labels():
+    # single 的 round_ended 四键不变、零行为变化：既有四档文案逐字保持。
+    assert call("describeRoundEnd", {"termination": "completed"}) == "本轮结束"
+    assert call("describeRoundEnd", {"termination": "all_failed"}) == "本轮结束"
+    assert call("describeRoundEnd", {"termination": "limit"}) == "本轮因达上限结束"
+    assert call("describeRoundEnd", {"termination": "cancelled"}) == "本轮已中止"
+    assert call("describeRoundEnd", {"termination": "error"}) == "本轮异常结束"
+
+
+def test_describe_round_end_unlimited_stopped_is_discussion_stopped():
+    text = call("describeRoundEnd", {
+        "termination": "stopped", "chain_id": "room:1", "round_index": 3,
+        "chain_continues": False,
+    })
+    assert text == "讨论已停止"
+    assert "本轮结束" not in text
+
+
+def test_describe_round_end_chain_continues_shows_next_round_not_round_end():
+    text = call("describeRoundEnd", {
+        "termination": "completed", "chain_id": "room:1", "round_index": 1,
+        "chain_continues": True,
+    })
+    assert text == "讨论中（第 2 轮）"
+    assert "本轮结束" not in text
+    # 只带 chain_continues 也认链（旧服务端字段的兼容路径）。
+    assert call("describeRoundEnd", {
+        "termination": "completed", "round_index": 2, "chain_continues": True,
+    }) == "讨论中（第 3 轮）"
+
+
+def test_describe_round_end_chain_terminal_defers_to_discussion_ended():
+    # 链即将结束但还不是终态：不抢文案，等 discussion_ended 给终态文案。
+    assert call("describeRoundEnd", {
+        "termination": "completed", "chain_id": "room:1", "round_index": 2,
+        "chain_continues": False,
+    }) is None
+    assert call("describeRoundEnd", {
+        "termination": "limit", "chain_id": "room:1", "round_index": 2,
+        "chain_continues": False,
+    }) is None
+    # 取消/异常链的 teardown 投递是尽力而为：先给中止提示，避免状态悬空。
+    assert call("describeRoundEnd", {
+        "termination": "cancelled", "chain_id": "room:1", "round_index": 2,
+        "chain_continues": False,
+    }) == "讨论已中止"
+    assert call("describeRoundEnd", {
+        "termination": "error", "chain_id": "room:1", "round_index": 2,
+        "chain_continues": False,
+    }) == "讨论异常结束"
+
+
+def test_should_show_stop_only_for_unlimited_active_round():
+    unlimited = {"round_active": True, "room": {"discussion_mode": "unlimited"}}
+    assert call("shouldShowStop", unlimited) is True
+    assert call("shouldShowStop", {
+        "round_active": False, "room": {"discussion_mode": "unlimited"},
+    }) is False
+    assert call("shouldShowStop", {
+        "round_active": True, "room": {"discussion_mode": "single"},
+    }) is False
+    assert call("shouldShowStop", {"round_active": True, "room": {}}) is False
+    assert call("shouldShowStop", {"round_active": True}) is False
+    assert call("shouldShowStop", {}) is False
+
+
+def test_should_apply_chain_event_guards_stale_chain():
+    payload = {"chain_id": "room:2", "termination": "stopped"}
+    assert call("shouldApplyChainEvent", "room:2", payload) is True
+    # 迟到的旧链终态：chain_id 不一致 → 丢弃，不得覆盖新链状态。
+    assert call("shouldApplyChainEvent", "room:1", payload) is False
+    # 事件不带 chain_id（single / 旧服务端 payload）→ 兼容应用。
+    assert call("shouldApplyChainEvent", "room:1", {"termination": "completed"}) is True
+    assert call("shouldApplyChainEvent", "room:1", {"chain_id": None}) is True
+    # 当前链未知（刷新/重连/错过 discussion_started）→ 接受并由事件认链。
+    assert call("shouldApplyChainEvent", None, payload) is True
+    assert call("shouldApplyChainEvent", "", payload) is True

@@ -17,7 +17,7 @@ from agent.config import AsterwyndConfig
 from agent.llm import LLMResponse, ToolCallDelta
 from agent.session import SessionSnapshot, SessionStore
 from tests.support.llm_harness import ScriptedLLM
-from web.server import _room_handshake, create_app
+from web.server import _discussion_snapshot, _room_handshake, create_app
 
 
 @pytest.fixture
@@ -530,3 +530,382 @@ def _next_event(ws, types, limit=20):
         if event.get("type") in types:
             return event
     raise AssertionError(f"no event of {types} within {limit}")
+
+
+# ---------------------------------------------------------------------------
+# change group-unlimited-discussion：讨论链的 HTTP/WS 面（tasks 1.4 / 2.4 / 2.5）
+# ---------------------------------------------------------------------------
+
+
+class _FakeRoomOrchestrator:
+    """房间 WS / REST stop 的注入替身：覆盖 room_state 快照与停止委托。
+
+    只实现 web 层用到的四个面（状态快照 / 轮次活跃 / 讨论链快照 / 停止），
+    让 web 契约测试不依赖 agent 层讨论链实现是否已落地。
+    """
+
+    def __init__(
+        self, *, stopping: bool = False, round_: int = 0, reason=None,
+        active: bool = False,
+    ) -> None:
+        self.stopping = stopping
+        self.round = round_
+        self.reason = reason
+        self.active = active
+        self.stop_calls: list[str] = []
+
+    def is_round_active(self, room_id):          # noqa: ANN001 - 测试替身
+        return self.active
+
+    def status_snapshot(self, room_id):          # noqa: ANN001
+        return [], 0
+
+    def discussion_snapshot(self, room_id):      # noqa: ANN001
+        return {"round": self.round, "reason": self.reason}
+
+    async def request_stop(self, room_id: str) -> bool:
+        self.stop_calls.append(room_id)
+        return self.stopping
+
+
+def _inject_orchestrator(client, fake):
+    ws = client.app.state.session_manager.primary_workspace
+    client.app.state.team_service.team_for(ws).orchestrator = fake
+    return ws
+
+
+class TestDiscussionSnapshotAdapter:
+    """`_discussion_snapshot`：编排器快照读取的容错适配（无 API 等价「无链」）。"""
+
+    def test_missing_api_falls_back_to_no_chain(self):
+        class Bare:
+            pass
+
+        assert _discussion_snapshot(Bare(), "r1") == {"round": 0, "reason": None}
+
+    def test_accepts_dict_and_tuple_forms(self):
+        class DictOrch:
+            def discussion_snapshot(self, room_id):      # noqa: ANN001
+                return {"round": 2, "reason": "converged"}
+
+        class TupleOrch:
+            def discussion_snapshot(self, room_id):      # noqa: ANN001
+                return (3, "stopped")
+
+        assert _discussion_snapshot(DictOrch(), "r") == {
+            "round": 2, "reason": "converged",
+        }
+        assert _discussion_snapshot(TupleOrch(), "r") == {
+            "round": 3, "reason": "stopped",
+        }
+
+    def test_unexpected_shape_falls_back_to_no_chain(self):
+        class Weird:
+            def discussion_snapshot(self, room_id):      # noqa: ANN001
+                return "nope"
+
+        assert _discussion_snapshot(Weird(), "r") == {"round": 0, "reason": None}
+
+
+class TestDiscussionModeRest:
+    """Decision 1：`discussion_mode` 的 REST 读写与三种非法组合。"""
+
+    def test_room_payload_exposes_discussion_mode(self, client):
+        pid = _create_persona(client, "甲")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "admin": pid,
+        }).json()["room"]
+        assert room["discussion_mode"] == "single"
+        assert client.get(
+            f"/api/team/rooms/{room['id']}/timeline"
+        ).json()["room"]["discussion_mode"] == "single"
+
+    def test_create_rejects_invalid_discussion_mode(self, client):
+        pid = _create_persona(client, "甲")["persona"]["id"]
+        resp = client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "discussion_mode": "nope",
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_discussion_mode"
+
+    def test_create_rejects_unlimited_without_everyone(self, client):
+        pid = _create_persona(client, "甲")["persona"]["id"]
+        resp = client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "discussion_mode": "unlimited",
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "discussion_mode_requires_everyone"
+        # 被拒绝的创建不落盘
+        assert client.get("/api/team").json()["rooms"] == []
+
+    def test_patch_rejects_invalid_discussion_mode(self, client):
+        pid = _create_persona(client, "甲")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "admin": pid,
+        }).json()["room"]
+        resp = client.patch(
+            f"/api/team/rooms/{room['id']}", json={"discussion_mode": "nope"},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_discussion_mode"
+
+    def test_patch_persists_discussion_mode_and_rejects_reply_mode_conflict(self, client):
+        a = _create_persona(client, "甲")["persona"]["id"]
+        b = _create_persona(client, "乙")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [a, b], "admin": a, "reply_mode": "everyone",
+        }).json()["room"]
+
+        patched = client.patch(
+            f"/api/team/rooms/{room['id']}", json={"discussion_mode": "unlimited"},
+        )
+        assert patched.status_code == 200
+        assert patched.json()["room"]["discussion_mode"] == "unlimited"
+        # 字段穿透：room_state/timeline 与 /api/team 的 rooms 都带它
+        timeline = client.get(f"/api/team/rooms/{room['id']}/timeline").json()
+        assert timeline["room"]["discussion_mode"] == "unlimited"
+        state = client.get("/api/team").json()
+        assert state["rooms"][0]["discussion_mode"] == "unlimited"
+
+        # 只把 reply_mode 改成 admin（未同时给 single）→ 400，且两字段保持原值
+        conflict = client.patch(
+            f"/api/team/rooms/{room['id']}", json={"reply_mode": "admin"},
+        )
+        assert conflict.status_code == 400
+        assert conflict.json()["error"] == "discussion_mode_requires_everyone"
+        unchanged = client.get(f"/api/team/rooms/{room['id']}/timeline").json()
+        assert unchanged["room"]["reply_mode"] == "everyone"
+        assert unchanged["room"]["discussion_mode"] == "unlimited"
+
+
+class TestDiscussionStopRest:
+    """Decision 5：REST 停止端点（幂等 no-op / unknown_room / workspace 回落）。"""
+
+    def test_unknown_room_returns_404(self, client):
+        resp = client.post("/api/team/rooms/r-nope/discussion/stop", json={})
+        assert resp.status_code == 404
+        assert resp.json()["error"] == "unknown_room"
+
+    def test_unknown_room_without_body_returns_404(self, client):
+        """body 可选：前端 REST 降级可以不传 workspace（回落主 workspace）。"""
+        resp = client.post("/api/team/rooms/r-nope/discussion/stop")
+        assert resp.status_code == 404
+        assert resp.json()["error"] == "unknown_room"
+
+    def test_workspace_not_allowed_returns_403(self, client):
+        resp = client.post(
+            "/api/team/rooms/r-nope/discussion/stop", json={"workspace": "/nope"},
+        )
+        assert resp.status_code == 403
+        assert resp.json()["error"] == "workspace_not_allowed"
+
+    def test_stop_is_idempotent(self, client):
+        pid = _create_persona(client, "甲")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "admin": pid,
+        }).json()["room"]
+        fake = _FakeRoomOrchestrator(stopping=False)
+        _inject_orchestrator(client, fake)
+
+        first = client.post(f"/api/team/rooms/{room['id']}/discussion/stop", json={})
+        second = client.post(f"/api/team/rooms/{room['id']}/discussion/stop", json={})
+        expected = {"stopping": False, "room_id": room["id"]}
+        assert first.status_code == 200 and first.json() == expected
+        assert second.status_code == 200 and second.json() == expected
+        # 幂等重试仍到达编排器（is_first 判重由编排器负责）
+        assert fake.stop_calls == [room["id"], room["id"]]
+
+    def test_stop_returns_stopping_true(self, client):
+        pid = _create_persona(client, "甲")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "admin": pid,
+        }).json()["room"]
+        fake = _FakeRoomOrchestrator(stopping=True)
+        _inject_orchestrator(client, fake)
+
+        resp = client.post(
+            f"/api/team/rooms/{room['id']}/discussion/stop",
+            json={"workspace": str(client.app.state.session_manager.primary_workspace)},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"stopping": True, "room_id": room["id"]}
+        assert fake.stop_calls == [room["id"]]
+
+    def test_stop_on_idle_room_is_real_orchestrator_noop(self, client):
+        """真实编排器端到端：无活动链 → stopping False，重复请求仍幂等。"""
+        pid = _create_persona(client, "甲")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "admin": pid,
+        }).json()["room"]
+        expected = {"stopping": False, "room_id": room["id"]}
+        for _ in range(2):
+            resp = client.post(
+                f"/api/team/rooms/{room['id']}/discussion/stop", json={},
+            )
+            assert resp.status_code == 200
+            assert resp.json() == expected
+
+    def test_stop_falls_back_to_room_owner_workspace(self, client, tmp_path):
+        """请求 workspace 里没有该房间 → 回落房间所属 workspace（与发消息同口径）。"""
+        other = tmp_path / "other-ws"
+        other.mkdir()
+        client.app.state.session_manager.register_workspace(other)
+        pid = _create_persona(client, "甲", workspace=str(other))["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "admin": pid,
+            "workspace": str(other),
+        }).json()["room"]
+
+        wrong_workspace = str(client.app.state.session_manager.primary_workspace)
+        resp = client.post(
+            f"/api/team/rooms/{room['id']}/discussion/stop",
+            json={"workspace": wrong_workspace},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"stopping": False, "room_id": room["id"]}
+
+
+class TestRoomStateDiscussionFields:
+    """Decision 7：`room_state` 带 `discussion_round` / `discussion_reason`（无 `discussion_active`）。"""
+
+    def test_room_state_has_discussion_fields_with_defaults(self, client):
+        pid = _create_persona(client, "甲")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "admin": pid,
+        }).json()["room"]
+        with client.websocket_connect(f"/ws/room/{room['id']}") as ws:
+            state = ws.receive_json()
+        assert state["type"] == "room_state"
+        data = state["data"]
+        assert data["room"]["discussion_mode"] == "single"
+        assert data["discussion_round"] == 0
+        assert data["discussion_reason"] is None
+        # Decision 1：不新增 discussion_active（前端自行用 round_active 推导）
+        assert "discussion_active" not in data
+
+    def test_room_state_reads_live_snapshot(self, client):
+        pid = _create_persona(client, "甲")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "admin": pid,
+        }).json()["room"]
+        _inject_orchestrator(client, _FakeRoomOrchestrator(
+            round_=2, reason="converged", active=True,
+        ))
+        with client.websocket_connect(f"/ws/room/{room['id']}") as ws:
+            data = ws.receive_json()["data"]
+        assert data["discussion_round"] == 2
+        assert data["discussion_reason"] == "converged"
+        assert data["round_active"] is True
+
+
+class TestRoomStopDiscussionWebSocket:
+    """Decision 5：房间 WS 消息 `{"type": "stop_discussion"}` 走 TeamService。"""
+
+    def test_stop_discussion_message_delegates_to_service(self, client):
+        pid = _create_persona(client, "甲")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "admin": pid,
+        }).json()["room"]
+        fake = _FakeRoomOrchestrator(stopping=True)
+        _inject_orchestrator(client, fake)
+
+        with client.websocket_connect(f"/ws/room/{room['id']}") as ws:
+            ws.receive_json()                       # room_state
+            ws.send_json({"type": "stop_discussion"})
+            # 接收循环顺序处理：pong 到达即说明 stop 已被处理（不新增 ack 契约）
+            ws.send_json({"type": "ping"})
+            assert _next_event(ws, {"pong"})["type"] == "pong"
+        assert fake.stop_calls == [room["id"]]
+
+
+class TestSingleModeEventFlowUnchanged:
+    """Decision 3/7：`single` 房间事件流逐字段不变，负向断言零 `discussion_*`。"""
+
+    def test_single_room_emits_no_discussion_events(self, client):
+        pid = _create_persona(client, "甲")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "admin": pid,
+        }).json()["room"]
+
+        with client.websocket_connect(f"/ws/room/{room['id']}") as ws:
+            ws.receive_json()                       # room_state
+            ws.send_json({"type": "chat", "content": "你好"})
+            events = []
+            for _ in range(64):
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "round_ended":
+                    break
+
+        types = [event["type"] for event in events]
+        assert not any(t.startswith("discussion_") for t in types)
+        assert "system_entry" not in types
+        ended = events[-1]
+        assert ended["type"] == "round_ended"
+        assert set(ended["data"]) == {"room_id", "termination", "limit", "status_seq"}
+        assert ended["data"]["termination"] == "completed"
+
+
+def test_unlimited_event_order_then_stopped(tmp_path):
+    """决策 7 的事件顺序：discussion_started → member_* → stop_requested → round_ended(stopped) → discussion_ended(stopped)。"""
+    class SlowLLM(ScriptedLLM):
+        async def chat(self, messages, tools=None, model="gpt-4"):
+            await asyncio.sleep(0.3)
+            return LLMResponse(content="继续讨论")
+
+    app = create_app(SlowLLM(), config=AsterwyndConfig(), workspace_root=tmp_path)
+    with TestClient(app) as client:
+        a = _create_persona(client, "甲")["persona"]["id"]
+        b = _create_persona(client, "乙")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [a, b], "admin": a,
+            "reply_mode": "everyone", "discussion_mode": "unlimited",
+        }).json()["room"]
+        assert room["discussion_mode"] == "unlimited"
+
+        with client.websocket_connect(f"/ws/room/{room['id']}") as ws:
+            state = ws.receive_json()
+            assert state["type"] == "room_state"
+            ws.send_json({"type": "chat", "content": "开始讨论"})
+            events = []
+            stop_sent = False
+            for _ in range(200):
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "member_speaking" and not stop_sent:
+                    ws.send_json({"type": "stop_discussion"})
+                    stop_sent = True
+                if event["type"] == "discussion_ended":
+                    break
+
+    types = [event["type"] for event in events]
+    assert stop_sent
+    assert "member_speaking" in types
+    assert "discussion_started" in types
+    assert "discussion_stop_requested" in types
+    assert "round_ended" in types
+    assert "discussion_ended" in types
+    i_started = types.index("discussion_started")
+    i_member = types.index("member_speaking")
+    i_stop = types.index("discussion_stop_requested")
+    i_round = types.index("round_ended")
+    i_ended = types.index("discussion_ended")
+    assert i_started < i_member < i_stop < i_round < i_ended
+
+    last_round_ended = [
+        event for event in events if event["type"] == "round_ended"
+    ][-1]
+    assert last_round_ended["data"]["termination"] == "stopped"
+    ended = events[-1]
+    assert ended["type"] == "discussion_ended"
+    assert ended["data"]["reason"] == "stopped"
+
+    chain_ids = {
+        event["data"]["chain_id"]
+        for event in events
+        if event["type"] in {
+            "discussion_started", "discussion_stop_requested",
+            "round_ended", "discussion_ended",
+        }
+    }
+    assert len(chain_ids) == 1, f"同一条链的 chain_id 必须一致: {chain_ids}"

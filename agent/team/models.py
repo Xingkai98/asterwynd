@@ -28,6 +28,13 @@ REPLY_MODES = ("admin", "everyone")
 #: 缺省 ``admin``——``everyone`` 的成本是每条消息 N 次模型调用，故默认关闭。
 DEFAULT_REPLY_MODE = "admin"
 
+#: 房间讨论模式取值（change ``group-unlimited-discussion``，design Decision 1）。
+#: ``single`` = 一条用户消息一轮（现状）；``unlimited`` = 一轮正常结束后自动续轮，
+#: 直到全员静默收敛 / 用户停止 / 安全阀到达。仅 ``reply_mode = everyone`` 合法。
+DISCUSSION_MODES = ("single", "unlimited")
+#: 缺省 ``single``——无限讨论链会按轮线性放大模型调用，故默认关闭。
+DEFAULT_DISCUSSION_MODE = "single"
+
 #: 内部会话的 kind 取值（design Decision 8）。真正定义在 ``agent.session``
 #: （``SessionSnapshot.kind`` 的宿主），这里复出以免两处各写一份字符串。
 KIND_CHAT = _session.KIND_CHAT
@@ -106,6 +113,9 @@ class Room:
     #: 应答模式（design Decision 19）：``admin`` 只让 admin 应答；``everyone`` 让
     #: 全体成员按序各得一次发言机会（admin 先）。
     reply_mode: str = DEFAULT_REPLY_MODE
+    #: 讨论模式（change ``group-unlimited-discussion`` Decision 1）：``single`` 为
+    #: 现状（一条用户消息 = 一轮）；``unlimited`` 自动续轮形成讨论链。
+    discussion_mode: str = DEFAULT_DISCUSSION_MODE
     id: str = ""
     #: ``persona_id -> 群内会话 id``（稳定映射，Decision 8）。
     sessions: dict[str, str] = field(default_factory=dict)
@@ -126,6 +136,7 @@ class Room:
             "admin": self.admin,
             "notice": self.notice,
             "reply_mode": self.reply_mode,
+            "discussion_mode": self.discussion_mode,
             "sessions": dict(self.sessions),
             "seen": dict(self.seen),
             "created_by": self.created_by,
@@ -140,6 +151,10 @@ class Room:
             notice=str(data.get("notice", "")),
             # 本 change 之前写入的房间记录没有该字段 → 按缺省 ``admin`` 读。
             reply_mode=str(data.get("reply_mode") or DEFAULT_REPLY_MODE),
+            # 本 change 之前写入的房间记录没有该字段 → 按缺省 ``single`` 读。
+            discussion_mode=str(
+                data.get("discussion_mode") or DEFAULT_DISCUSSION_MODE
+            ),
             id=str(data.get("id", "")),
             sessions={str(k): str(v) for k, v in (data.get("sessions") or {}).items()},
             seen={str(k): int(v) for k, v in (data.get("seen") or {}).items()},
