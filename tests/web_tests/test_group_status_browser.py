@@ -686,7 +686,8 @@ async def test_group_discussion_settings_dialog_and_mobile_header(page, group_se
         timeout=BROWSER_TIMEOUT_MS,
     )
 
-    # admin 房（默认）设置：unlimited 选项 disabled，并有「需两步」提示。
+    # admin 房（默认）设置：unlimited 初始 disabled；同一对话框内把「应答模式」
+    # 切到 everyone 后必须立即可选（动态联动，不要求先保存再重开），切回 admin 重新置灰。
     await page.click("#group-empty-drawer")
     await page.wait_for_selector("#group-sidebar.open")
     await _open_room(page, "状态房间")
@@ -698,8 +699,19 @@ async def test_group_discussion_settings_dialog_and_mobile_header(page, group_se
     assert await page.eval_on_selector(
         "#group-field-discussion_mode option[value='single']", "e => e.disabled",
     ) is False
-    hint = await page.text_content(".group-field-hint")
-    assert "两步" in hint
+    assert "everyone" in await page.text_content(".group-field-hint")
+    await page.select_option("#group-field-reply_mode", "everyone")
+    await page.wait_for_function(
+        "() => document.querySelector(\"#group-field-discussion_mode option[value='unlimited']\").disabled === false",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+    await page.select_option("#group-field-discussion_mode", "unlimited")
+    await page.select_option("#group-field-reply_mode", "admin")
+    await page.wait_for_function(
+        "() => document.querySelector(\"#group-field-discussion_mode option[value='unlimited']\").disabled === true"
+        " && document.querySelector('#group-field-discussion_mode').value === 'single'",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
     dialog_box = await page.eval_on_selector(
         "#group-dialog",
         "e => { const r = e.getBoundingClientRect();"
@@ -767,7 +779,8 @@ async def test_group_discussion_settings_dialog_and_mobile_header(page, group_se
     await page.click(".group-dialog-actions button[type='button']")
     await page.wait_for_selector("#group-dialog", state="hidden")
 
-    # 新建房间对话框：默认 admin ⇒ unlimited disabled + 两步提示。
+    # 新建房间对话框：默认 admin ⇒ unlimited disabled；同一对话框切到 everyone 后
+    # 立即可选，选中 unlimited 一步提交即可成功创建 everyone+unlimited 房间。
     await page.click("#group-drawer-toggle")
     await page.wait_for_selector("#group-sidebar.open")
     await page.click("#group-room-add")
@@ -775,6 +788,14 @@ async def test_group_discussion_settings_dialog_and_mobile_header(page, group_se
     assert await page.eval_on_selector(
         "#group-field-discussion_mode option[value='unlimited']", "e => e.disabled",
     ) is True
-    hint = await page.text_content(".group-field-hint")
-    assert "两步" in hint
-    await page.click(".group-dialog-actions button[type='button']")
+    assert "everyone" in await page.text_content(".group-field-hint")
+    await page.fill("#group-field-name", "一步无限房")
+    await page.select_option("#group-field-reply_mode", "everyone")
+    await page.select_option("#group-field-discussion_mode", "unlimited")
+    await page.click(".group-dialog-actions button[type='submit']")
+    await page.wait_for_selector("#group-dialog", state="hidden")
+    await page.wait_for_function(
+        "() => { const r = (window.AsterwyndGroup._state.rooms || []).find(x => x.name === '一步无限房');"
+        " return Boolean(r && r.reply_mode === 'everyone' && r.discussion_mode === 'unlimited'); }",
+        timeout=BROWSER_TIMEOUT_MS,
+    )

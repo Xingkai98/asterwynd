@@ -42,7 +42,7 @@ Web UI SHALL 提供以下管理入口：创建/改名/改指令/改模型/删除
 
 ### Requirement: 群聊讨论链状态与停止讨论控件
 
-Web UI 的群聊视图 SHALL 展示当前讨论状态，并 SHALL 在 `discussion_mode = unlimited` 的讨论链进行中提供「停止讨论」控件。房间设置 SHALL 提供讨论模式选择（`single` / `unlimited`），且 SHALL 仅在房间 `reply_mode = everyone` 时允许选择 `unlimited`；`reply_mode = admin` 时该选项 SHALL 不可用（置灰或隐藏），服务端返回结构化错误时前端 SHALL 展示该错误，SHALL NOT 静默丢弃。讨论进行中 SHALL 显示「讨论中（第 k 轮）」；整条讨论结束时 SHALL 按 `discussion_ended.reason` 显示「讨论已收敛」（`converged`）/「讨论已停止」（`stopped`）/「讨论达安全上限」（`max_rounds` / `max_turns` / `max_seconds`）/「讨论已中止（本轮无人发言，存在失败）」（`all_failed`）/「讨论已结束（模式已变更）」（`mode_changed`）/「讨论已中止」（`cancelled`）/「讨论异常结束」（`error`）/「讨论因本轮达上限结束」（`round_limit`）/「讨论已结束」（`completed`）。`round_ended` 且 `chain_continues = true` 时 SHALL NOT 显示「本轮结束」；`unlimited` 下 `round_ended(termination = "stopped")` SHALL 显示「讨论已停止」（不得显示「本轮结束」）。讨论事件的终态 SHALL 按 `chain_id` 归属校验：只应用与当前讨论链 `chain_id` 一致的 `round_ended` / `system_entry` / `discussion_stop_requested` / `discussion_ended`，迟到的旧链终态 SHALL NOT 覆盖新链状态。链内新增的 `system` 条目 SHALL 通过 `system_entry` 事件实时追加到时间线（按 `seq` 去重），SHALL NOT 只依赖刷新。停止控件 SHALL 通过房间级 WebSocket 发送 `stop_discussion`；WS 未连通时 SHALL 降级为 `POST /api/team/rooms/{room_id}/discussion/stop`。点击后控件 SHALL 置灰并显示「正在停止…」，收到 `discussion_ended` 后恢复。停止控件 SHALL 收纳进房间头部既有次要动作区，390px 视口下 SHALL NOT 造成房间头部横向溢出。`discussion_mode = single` 的房间 SHALL 保持既有状态文案与行为不变，SHALL NOT 显示停止控件。刷新/重连时 SHALL 依据 `room_state` 的 `room.discussion_mode`、`discussion_round`、`discussion_reason` 恢复「讨论中（第 k 轮）」或最近一次终态文案（无值不显示）。
+Web UI 的群聊视图 SHALL 展示当前讨论状态，并 SHALL 在 `discussion_mode = unlimited` 的讨论链进行中提供「停止讨论」控件。房间设置 SHALL 提供讨论模式选择（`single` / `unlimited`），且 SHALL 仅在房间 `reply_mode = everyone` 时允许选择 `unlimited`；`reply_mode = admin` 时该选项 SHALL 不可用（置灰或隐藏）。该可用性 SHALL **随同一对话框内「应答模式」的选择即时更新**：切到 `everyone` 后 `unlimited` SHALL 立即可选（SHALL NOT 要求先保存再重开对话框），切回 `admin` SHALL 重新置灰并把已选 `unlimited` 复位为 `single`；新建房间 SHALL 允许在同一对话框内一步选择 `everyone + unlimited`。服务端返回结构化错误时前端 SHALL 展示该错误，SHALL NOT 静默丢弃。讨论进行中 SHALL 显示「讨论中（第 k 轮）」；整条讨论结束时 SHALL 按 `discussion_ended.reason` 显示「讨论已收敛」（`converged`）/「讨论已停止」（`stopped`）/「讨论达安全上限」（`max_rounds` / `max_turns` / `max_seconds`）/「讨论已中止（本轮无人发言，存在失败）」（`all_failed`）/「讨论已结束（模式已变更）」（`mode_changed`）/「讨论已中止」（`cancelled`）/「讨论异常结束」（`error`）/「讨论因本轮达上限结束」（`round_limit`）/「讨论已结束」（`completed`）。`round_ended` 且 `chain_continues = true` 时 SHALL NOT 显示「本轮结束」；`unlimited` 下 `round_ended(termination = "stopped")` SHALL 显示「讨论已停止」（不得显示「本轮结束」）。讨论事件的终态 SHALL 按 `chain_id` 归属校验：只应用与当前讨论链 `chain_id` 一致的 `round_ended` / `system_entry` / `discussion_stop_requested` / `discussion_ended`，迟到的旧链终态 SHALL NOT 覆盖新链状态。链内新增的 `system` 条目 SHALL 通过 `system_entry` 事件实时追加到时间线（按 `seq` 去重），SHALL NOT 只依赖刷新。停止控件 SHALL 通过房间级 WebSocket 发送 `stop_discussion`；WS 未连通时 SHALL 降级为 `POST /api/team/rooms/{room_id}/discussion/stop`。点击后控件 SHALL 置灰并显示「正在停止…」，收到 `discussion_ended` 后恢复。停止控件 SHALL 收纳进房间头部既有次要动作区，390px 视口下 SHALL NOT 造成房间头部横向溢出。`discussion_mode = single` 的房间 SHALL 保持既有状态文案与行为不变，SHALL NOT 显示停止控件。刷新/重连时 SHALL 依据 `room_state` 的 `room.discussion_mode`、`discussion_round`、`discussion_reason` 恢复「讨论中（第 k 轮）」或最近一次终态文案（无值不显示）。
 
 #### Scenario: 无限讨论中的第 k 轮状态
 
@@ -78,6 +78,20 @@ Web UI 的群聊视图 SHALL 展示当前讨论状态，并 SHALL 在 `discussio
 - **WHEN** 用户打开房间设置
 - **THEN** 讨论模式的 `unlimited` 选项 SHALL 不可用
 - **AND** 服务端返回结构化错误时前端 SHALL 展示该错误
+
+#### Scenario: 同一对话框内切换应答模式即时联动
+
+- **GIVEN** 打开房间设置时 `reply_mode = admin`，`unlimited` 置灰
+- **WHEN** 用户在同一对话框内把「应答模式」切换为 `everyone`
+- **THEN** `unlimited` SHALL 立即可选（SHALL NOT 要求先保存再重新打开对话框）
+- **AND** 若用户随后切回 `admin`，`unlimited` SHALL 重新置灰且已选值 SHALL 复位为 `single`
+
+#### Scenario: 新建房间一步创建 everyone + unlimited
+
+- **GIVEN** 新建房间对话框（默认 `reply_mode = admin`）
+- **WHEN** 用户在同一对话框内选择 `everyone` 并选择 `unlimited` 后提交
+- **THEN** 系统 SHALL 创建 `reply_mode = everyone`、`discussion_mode = unlimited` 的房间
+- **AND** SHALL NOT 要求用户先保存 everyone 再二次进入设置
 
 #### Scenario: 单轮房间零变化
 

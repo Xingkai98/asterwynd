@@ -798,7 +798,7 @@
       if (field.type !== 'members') input.id = `group-field-${field.name}`;
       inputs[field.name] = input;
       label.appendChild(input);
-      if (field.hint) {
+      if (field.hint !== undefined) {
         const hint = document.createElement('div');
         hint.className = 'group-field-hint';
         hint.textContent = field.hint;
@@ -898,15 +898,10 @@
     return new Error(known[raw] || raw || '保存失败');
   }
 
-  function discussionModeHint(isNew, replyMode) {
+  function discussionModeHint(replyMode) {
     if (replyMode === 'everyone') return '';
-    if (isNew) {
-      // 新建默认 admin，且 unlimited 在打开对话框时即不可选 ⇒ everyone + unlimited 需两步。
-      return '新建房间默认 admin 应答模式；如需 everyone + 无限讨论，请先创建 everyone 房间，'
-        + '再在房间设置中把讨论模式改为无限讨论（需两步）。';
-    }
-    return '无限讨论仅在 everyone 应答模式可用；请先把应答模式设为 everyone 并保存，'
-      + '再回来修改讨论模式（需两步）。';
+    return '无限讨论仅在 everyone 应答模式可用：把上方「应答模式」切换为 everyone 后'
+      + '即可立即选择（无需先保存）。';
   }
 
   function openRoomDialog(room) {
@@ -914,10 +909,7 @@
     const memberOptions = state.personas.map(p => ({ value: p.id, label: p.name || p.id }));
     const adminOptions = [{ value: '', label: '（无）' }].concat(memberOptions);
     const replyMode = room ? room.reply_mode : 'admin';
-    // 讨论模式仅在 everyone 应答模式可用：选项按打开对话框时的生效值置 disabled，
-    // 服务端仍按合并后生效值校验（400 兜底展示，见 roomDialogError）。
-    const unlimitedDisabled = replyMode !== 'everyone';
-    openDialog(isNew ? '新建群聊' : `设置群聊：${room.name}`, [
+    const inputs = openDialog(isNew ? '新建群聊' : `设置群聊：${room.name}`, [
       { name: 'name', label: '名称', value: room ? room.name : '' },
       { name: 'notice', label: '群公告（每名成员发言前注入）', type: 'textarea', value: room ? room.notice : '' },
       {
@@ -931,16 +923,10 @@
       {
         name: 'discussion_mode', label: '讨论模式', type: 'select',
         value: room && room.discussion_mode ? room.discussion_mode : 'single',
-        hint: discussionModeHint(isNew, replyMode),
+        hint: discussionModeHint(replyMode),
         options: [
           { value: 'single', label: 'single（单轮，默认）' },
-          {
-            value: 'unlimited',
-            label: unlimitedDisabled
-              ? 'unlimited（无限讨论，仅 everyone 应答模式可用）'
-              : 'unlimited（无限讨论：成员自动连续多轮）',
-            disabled: unlimitedDisabled,
-          },
+          { value: 'unlimited', label: 'unlimited（无限讨论）' },
         ],
       },
       { name: 'members', label: '成员', type: 'members', options: memberOptions, value: room ? room.members : [] },
@@ -965,6 +951,33 @@
         throw roomDialogError(err);
       }
     });
+
+    // 讨论模式可用性随「应答模式」选择即时联动：同一对话框内切到 everyone 立即可选，
+    // 切回 admin 立即置灰并把已选 unlimited 复位为 single；服务端仍按合并后的生效值
+    // 校验（400 兜底展示，见 roomDialogError）。
+    const discussionSelect = inputs.discussion_mode;
+    const unlimitedOption = discussionSelect.querySelector("option[value='unlimited']");
+    const discussionHint = discussionSelect
+      .closest('label')
+      .querySelector('.group-field-hint');
+    function syncDiscussionModeAvailability() {
+      const available = Status && Status.unlimitedDiscussionAvailable
+        ? Status.unlimitedDiscussionAvailable(inputs.reply_mode.value)
+        : inputs.reply_mode.value === 'everyone';
+      unlimitedOption.disabled = !available;
+      unlimitedOption.textContent = available
+        ? 'unlimited（无限讨论：成员自动连续多轮）'
+        : 'unlimited（无限讨论，仅 everyone 应答模式可用）';
+      if (!available && discussionSelect.value === 'unlimited') {
+        discussionSelect.value = 'single';
+      }
+      if (discussionHint) {
+        discussionHint.textContent = discussionModeHint(inputs.reply_mode.value);
+        discussionHint.hidden = discussionHint.textContent === '';
+      }
+    }
+    inputs.reply_mode.addEventListener('change', syncDiscussionModeAvailability);
+    syncDiscussionModeAvailability();
   }
 
   // ---------------------------------------------------------------- 绑定

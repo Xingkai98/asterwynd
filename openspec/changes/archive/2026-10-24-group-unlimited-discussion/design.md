@@ -157,7 +157,7 @@
   - 状态文案映射同 delta；`chain_continues=true` 时**不**显示「本轮结束」。
   - 停止按钮：`round_active && room.discussion_mode==="unlimited"` 可见；点击发 WS `stop_discussion`（WS 未连 → REST），置灰「正在停止…」，`discussion_ended` 后恢复。
   - `system_entry` 实时 append 时间线（按 `seq` 去重）。
-  - 设置对话框：`openDialog` 的 option schema 增 `disabled` 支持（grill L5）；`reply_mode != everyone` 时 `unlimited` 置 disabled；新建房间默认 `admin` ⇒ **创建 everyone+unlimited 需两步（先建 everyone，再改讨论模式）**，对话框 UI 如实提示；服务端 400 兜底展示。
+  - 设置对话框：`openDialog` 的 option schema 增 `disabled` 支持（grill L5），并**在对话框内动态联动**——`reply_mode` 选择变化时即时更新 `unlimited` 的 disabled/文案：切到 `everyone` **立即可选**，切回 `admin` 重新置灰并把已选 `unlimited` 复位为 `single`；因此新建房间可在同一对话框**一步**选中 `everyone + unlimited`（无需先保存再重开）；服务端仍按合并后生效值 400 兜底展示。可用性判定收成 `group_status.js` 纯函数 `unlimitedDiscussionAvailable(replyMode)` 以便单测。
   - 头部：停止控件放 `.group-room-actions`，390px 下沿用 wrap、不横向溢出（`style.css:2274,2309-2316`）。
 - `discussion_round` 口径：当前链已进入的轮序号（1-based；无链 0），文案直接用、不 +1。
 

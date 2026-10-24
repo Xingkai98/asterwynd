@@ -57,6 +57,13 @@ def _status(pid, phase, tools=None, count=None):
     }
 
 
+def test_unlimited_discussion_available_only_for_everyone():
+    assert call("unlimitedDiscussionAvailable", "everyone") is True
+    assert call("unlimitedDiscussionAvailable", "admin") is False
+    assert call("unlimitedDiscussionAvailable", "") is False
+    assert call("unlimitedDiscussionAvailable", None) is False
+
+
 def test_status_event_replaces_whole_table_and_drops_stale_seq():
     state = {"statuses": {}, "seq": 5}
     newer = call("applyStatusEvent", state, {

@@ -251,6 +251,12 @@
     return String(currentChainId) === String(payload.chain_id);
   }
 
+  // 讨论模式可用性：unlimited 仅在 everyone 应答模式可用。
+  // 对话框内「应答模式」切换时即时调用（动态解禁/置灰），不是打开对话框时的静态快照。
+  function unlimitedDiscussionAvailable(replyMode) {
+    return replyMode === 'everyone';
+  }
+
   window.AsterwyndGroupStatus = {
     PHASES,
     createStatusState,
@@ -265,5 +271,6 @@
     describeDiscussionEnd,
     shouldShowStop,
     shouldApplyChainEvent,
+    unlimitedDiscussionAvailable,
   };
 })();

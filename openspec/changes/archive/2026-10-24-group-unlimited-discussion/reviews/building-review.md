@@ -130,3 +130,9 @@ uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --req
 ## 闭环出口
 
 PASS —— 无 medium+（批次 I 为空，本轮不开批）；15 条 low/nit 已登记且写明不阻塞理由；实现与 design Decision 1–10 / Q1–Q4 及三份 delta 逐项对齐，三份当前规格已同步且正文与 delta 一致；定向套件 335 + 浏览器 6 + 团队层 325 全绿，`openspec validate --strict` 29/29、瘦 checker exit 0。允许进入收尾（tasks 2.7 全量回归由 Lead 完成 → 3.6 勾选 → 4.1–4.5 归档/重建 manifest/PR）。
+
+## Pre-merge fix（用户试用反馈，2026-10-24）
+
+- **现象**：房间设置对话框里把「应答模式」切到 everyone 后，`unlimited` 仍置灰——可用性按**打开对话框时**的 `reply_mode` 静态计算（原 design/实现口径：新建 everyone+unlimited 需两步）。
+- **修复**：改为对话框内动态联动——`group_status.js` 新增纯函数 `unlimitedDiscussionAvailable(replyMode)`；`group.js` 监听 `reply_mode` change 事件即时更新 disabled/文案，切到 everyone 立即解禁、切回 admin 重新置灰并把已选 unlimited 复位 single；新建房间支持一步选择 everyone+unlimited；服务端 400 仍兜底。
+- **验证**：JS 纯函数单测 +1（4 分支）；浏览器用例扩展「admin→everyone 即时可选→admin 置灰+复位 single」「新建对话框一步提交 everyone+unlimited 成功」；前端套件 `test_group_status_js.py + test_group_status_browser.py` 33 passed。
