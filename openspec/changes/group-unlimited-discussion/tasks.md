@@ -10,10 +10,10 @@
 - [x] 0.1 用 `grilling` 同等标准（独立零记忆 subagent）执行设计追问，产出 `reviews/grill-design.md`
   （12 条 Confirmed Decisions、4 条 Open Questions、22 条 Design Corrections；`## User Confirmation` 已回填）。
 - [x] 0.2 逐项落实 grill 的 C1–C22，回写 `design.md`。
-- [ ] 0.3 设计阶段对抗闭环 → `reviews/grill-adversarial.md`：r1 = CHANGES_REQUESTED（批次 I 12 条已全修，design v4）；r2 只做修复验证，`PASS` 后方可写码。
+- [x] 0.3 设计阶段对抗闭环 → `reviews/grill-adversarial.md`：r1 = CHANGES_REQUESTED（批次 I 12 条全修）→ r2 = CHANGES_REQUESTED（I10 两处 delta 未同步 Q2）→ r3 = **PASS**（无新 medium+；N11/N13/N14 low、N15/N16 nit 登记）。
 - [x] 0.4 停轮确认：4 个 Open Questions（每条配具体例子）已抛给用户，答复写入
   `reviews/grill-design.md` 的 `## User Confirmation` 与 `design.md` 的 `## User Rulings`（Q1 不收敛 / Q2 保持现状+日志 / Q3 单轮不停止 / Q4 slot 间检查）。
-- [ ] 0.5 回填 `design.md` 的 `## Pre-Implementation Review`（grill 决策、对抗轮次、修复项、出口）。
+- [x] 0.5 回填 `design.md` 的 `## Pre-Implementation Review`（grill 决策、对抗轮次 r1→r2→r3、修复项、PASS 出口）。
 
 ## 1. 测试（TDD，先红后绿）
 

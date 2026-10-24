@@ -73,18 +73,18 @@
 ## 覆盖性结论
 
 - **修复完整度**：I1–I9、I11–I12 的修法均在现有代码结构上可落地，且已写进算法/契约/测试策略——同步区（`design.md:67,82`）、`current` 不变量（`:61`）、release 身份=链（`:69,71`）、k>1 空 opening（`:85`）、`pending_user_seqs` 两端（`:74-75`）、双恢复字段宿主（`:152`）、四路安全阀与 reason 归属（`:95-97,138`）都有明确落点，没有“design 说了但代码无法表达”的点。
-- **是否引入新的 medium+**：无。新发现最高为 low（N1–N10 为 nit/精度项，N11–N12 为 deferred low）；**唯一 medium 是 I10 的未清残余**，不是新问题——“Q2 断线写 system”在 `design.md:170` 与 `specs/multi-agent-collaboration/spec.md:5` 已改对，但同一 delta 的场景 `:54-55` 与 ADDED 例外 `:90` 未同步。按 r1 的 I10 原文，这正是“接受 Q2 就必须改的两条 delta”之一。
+- **是否引入新的 medium+**：无。新发现最高为 low（N1–N10、N13 为 nit/精度项，N11–N12 为 deferred low）；**唯一 medium 是 I10 的未清残余**，不是新问题——“Q2 断线写 system”在 `design.md:170` 与 `specs/multi-agent-collaboration/spec.md:5` 已改对，但同一 delta 的场景 `:54-55` 与 ADDED 例外 `:90` 未同步。按 r1 的 I10 原文，这正是“接受 Q2 就必须改的两条 delta”之一。
 - **L 表**：18/18 均已“已修”或“可接受（留 low 残留）”。L15/L16 的残留（轮间停止的噪声 system、`terminal_sent` 置位点）不阻塞；其余 L 项逐条有证据。
 - **Q1–Q4**：Q1（`design.md:76/102`；delta `:90,157-163`）、Q3（`design.md:127,131,157`；delta `:5,46`；web-ui `:45,82-87`）、Q4（`design.md:139`；delta `:142-148`；`design.md:187` ⑦；`tasks.md:28`）联动一致；Q2 只在 delta 两处失配，见上。
 - **结构校验**：`openspec validate --all --strict` 29/29 通过；该结果不覆盖 I10 的语义矛盾（strict validate 不做跨句一致性）。
 
 ## 闭环出口
 
-**CHANGES_REQUESTED**。剩余 medium+ 清单（1 条，均属 I10）：
+**CHANGES_REQUESTED**。剩余 medium+ 清单（1 条，属 I10）：
 
 1. `specs/multi-agent-collaboration/spec.md:54-55`：取消场景两次“SHALL NOT 写房间日志”，其中 `:55` 明确覆盖 `unlimited` 的 `discussion_ended`，与同文件 `:5`、`design.md:108/:170` 和 Q2 裁决冲突。
    最小补丁：改为“`single` 取消 SHALL NOT 写房间日志；`unlimited` 链因断线取消 SHALL 写 `system`「讨论因页面断开而中止」，意外异常 `error` 不写；两条通知 SHALL NOT 产生 `RoundResult`、SHALL NOT 被解释为新增轮次出口”。
 2. `specs/multi-agent-collaboration/spec.md:90`：链结束 system 的例子仍写“（取消/异常与‘房间已无成员’退化路径除外）”，把断线取消也排除了。
    最小补丁：例外改为“（`error`、`single` 取消与‘房间已无成员’退化路径除外；断线取消按「房间级互斥与轮次终止」写 `system`）”。
 
-补完这两处即构成**批次 II**（非空 medium+ 批次，仅此 1 条）；批次 II 修完后按有界批次模型再跑一轮只做修复验证的复核（批次 II 收口），届时若 I10 转 ✅ 且无新 medium+ 才给 PASS。若同时顺手处理 N1–N10 的 low 项更佳（非 PASS 前置条件）。本轮不给 PASS。
+补完这两处即构成**批次 II**（非空 medium+ 批次，仅此 1 条）；批次 II 修完后按有界批次模型再跑一轮只做修复验证的复核（批次 II 收口），届时若 I10 转 ✅ 且无新 medium+ 才给 PASS。若同时顺手处理 N1–N10、N13 的 low 项更佳（非 PASS 前置条件）。本轮不给 PASS。

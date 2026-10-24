@@ -82,7 +82,7 @@
   2. **认领 + 第 1 轮骨架（同一同步区）**：建 `_ChainState`；`start_seq`、`slots = opening_slots(room, opening_text, ...)`、`limit = len(slots)+extra+(admin?admin_extra:0)` 与剩余链额度取 min；建 `_RoundState`；`chain.current = state`；`chain.round_index = 1`；`self._rounds[room.id] = chain`。**查—建—挂 current 之间无任何 await**（grill I1）。
   3. append 用户条目（同步，回填 `state.start_seq` 与 `pending_user_seqs`）；`await user_message`；`unlimited` 下再 `await discussion_started`（payload 钉死：`{room_id, chain_id, discussion_mode, members:[persona_id...], round_index:1, limits:{max_rounds,max_turns,max_seconds}}`，grill I4/L9）。
   4. 循环 `while True`：
-     a. **（k>1，先检查 `stop_requested`）同步建下一轮**：若 `stop_requested` 已置位则不 append「讨论继续」、直接进入收尾（grill N12）；否则`sys_entry = log.append_system("讨论继续（第 k 轮）")`；`slots = opening_slots(room, "", ...)`（**k>1 SHALL 传空串**，否则开局行首 `@` 会让后续每轮只剩点名者，grill I7）；应用并清空 `pending_mentions`（按顺序插队首、去重、非本群/自己忽略）；`limit = min(轮预算, max_turns - chain.turns)`；建 `_RoundState`；`chain.current = state`；`chain.round_index += 1`。
+     a. **（k>1，先检查 `stop_requested`）同步建下一轮**：若 `stop_requested` 已置位则**不建新轮**——直接置 `chain.closing`、append「讨论已由用户停止」`system`、`_reset_room_statuses` + `_release_round` 并结束链（不补发 `round_ended`，`rounds`/`rounds_started`/`turns` 保持上一轮值；grill N12/N14）；否则`sys_entry = log.append_system("讨论继续（第 k 轮）")`；`slots = opening_slots(room, "", ...)`（**k>1 SHALL 传空串**，否则开局行首 `@` 会让后续每轮只剩点名者，grill I7）；应用并清空 `pending_mentions`（按顺序插队首、去重、非本群/自己忽略）；`limit = min(轮预算, max_turns - chain.turns)`；建 `_RoundState`；`chain.current = state`；`chain.round_index += 1`。
      b. `await system_entry`（k>1，payload：`{room_id, chain_id, seq, text}`）。
      c. `await self._drive(chain, state)`：**每个 slot 前后检查** `stop_requested`（跳过剩余 slot）与墙钟（`elapsed >= max_seconds` → 不再开新回合，grill L15/Q4）；`_run_slot(chain, state, persona_id)` 内消费 `pending_user_seqs`（Decision 2）。
      d. **同步收尾区**：`state.closed = True`；轮终止判定：`stop_requested` → `stopped`；`turns >= limit and index < len(slots)` → `limit`（append system「本轮因达上限结束」）；0 发言且有失败 → `all_failed`；否则 `completed`。**仅当 termination ∈ {completed, limit, all_failed} 时 `chain.rounds.append(state)`**（`stopped` 不计入，grill I3）；`chain.turns += state.turns`。链级判定见下表（纯同步快照）。
@@ -218,4 +218,4 @@
 ## Pre-Implementation Review
 
 - grill（独立零记忆）：`reviews/grill-design.md` —— 12 条 Confirmed Decisions、4 条 Open Question（已由用户裁决）、22 条 Design Corrections（C1–C22，已全部回写）。
-- 设计对抗闭环：`reviews/grill-adversarial.md`（r1：CHANGES_REQUESTED，批次 I 12 条 = 1 high + 11 medium；r2 修复验证待跑，PASS 后本 change 才进入实现）。
+- 设计对抗闭环：`reviews/grill-adversarial.md` —— r1 = CHANGES_REQUESTED（批次 I 12 条：1 high + 11 medium）→ r2 = CHANGES_REQUESTED（I10 delta 两处，1 medium）→ r3 = **PASS**（无新 medium+；N11/N13/N14 low、N15/N16 nit 登记）。**闭环出口 PASS，允许进入实现。** 逐轮证据在 `reviews/rounds/`。
