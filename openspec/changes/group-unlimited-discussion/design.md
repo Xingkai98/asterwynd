@@ -127,7 +127,7 @@
   - 无活动链、链已 `closing`、或房间 `discussion_mode == "single"` → `False`（Q3 用户裁决：单轮不提供停止；幂等 no-op）。
   - 否则**同步**完成「读 `stop_requested` → 判首次 → 置位」；首次时 `await` 发 `discussion_stop_requested {room_id, chain_id}`；重复请求返回 `True` 但不重复发事件（grill CQ11）。
 - 生效点（不打断在跑回合）：`_drive` 每个 slot **前后**都检查（grill L15，保证轮间窗口也最快收敛）；轮间续轮判定优先级 1。
-- 停止后：同步 reset/释放、写 `system`、发 `round_ended(stopped)` / `discussion_ended(stopped)`。
+- 停止后：若当前有进行中的轮次，则同步 reset/释放、写 `system`、发 `round_ended(stopped)` 与 `discussion_ended(stopped)`；若停止请求落在轮间窗口（没有进行中的轮次），则不补发 `round_ended`（见 4a 分支），只发 `discussion_ended(stopped)`。
 - `single` 模式：`request_stop` 返回 `False`、不产生 `stopped`、按钮不显示（Q3）。
 
 ### Decision 6：安全阀（`team:` 配置节，链启动快照）
