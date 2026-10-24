@@ -17,9 +17,9 @@
 
 ## 1. 测试（TDD，先红后绿）
 
-- [ ] 1.1 `tests/agent/team/test_team_store.py`：`Room.discussion_mode` 缺省 `single`、roundtrip、旧 JSON 缺字段兼容。
-- [ ] 1.2 `tests/agent/test_config.py`：`TeamConfig` 三参数默认 200/600/6000、YAML 覆盖、非法值 `ConfigError`。
-- [ ] 1.3 扩展 `tests/agent/team/test_orchestrator.py`（FakeRunner + 可注入 clock）：
+- [x] 1.1 `tests/agent/team/test_team_store.py`：`Room.discussion_mode` 缺省 `single`、roundtrip、旧 JSON 缺字段兼容。
+- [x] 1.2 `tests/agent/test_config.py`：`TeamConfig` 三参数默认 200/600/6000、YAML 覆盖、非法值 `ConfigError`。
+- [x] 1.3 扩展 `tests/agent/team/test_orchestrator.py`（FakeRunner + 可注入 clock）：
   - unlimited 连开 ≥3 轮（发言 → 部分静默 → 全员静默 `converged`）；每轮每人一次、admin 先；
   - single 模式只跑一轮且事件/payload 与现状逐字段一致（快照断言）；
   - 用户插话：链中进日志 + 行首 `@` 插当前轮；轮间窗口进 `pending_mentions` 并在下一轮生效；
@@ -35,41 +35,41 @@
   - review sink 抛异常不中断链；`chain_id` 单调递增；`rounds`/`rounds_started`/`turns`/`elapsed_seconds` 精确值；
   - 控制台断言 `single` 房 `request_stop=False`、不产生 `stopped`、无 `discussion_*`/`system_entry` 事件；
   - 链中 `delete_room` → 收尾 `completed` 且不复活日志；可挂起 emit sink 覆盖首轮骨架窗口（grill I1）。
-- [ ] 1.4 扩展 `tests/web_tests/test_group_chat_server.py` / `test_group_chat_team.py`：
+- [x] 1.4 扩展 `tests/web_tests/test_group_chat_server.py` / `test_group_chat_team.py`：
   - 房间 create/patch 校验（`unlimited`+`admin` → 400 `discussion_mode_requires_everyone`；
     改 `reply_mode` 冲突 → 400；非法值 → 400 `invalid_discussion_mode`）；
   - `room_state`：`room.discussion_mode` + `discussion_round` + `discussion_reason`（**不新增 `discussion_active`**）；
   - REST stop 幂等 + 跨 workspace 回落；WS `stop_discussion` 生效；事件顺序
     `discussion_started → member_* → discussion_stop_requested → round_ended(stopped) → discussion_ended(stopped)`；
     单轮房间事件流与现状一致。
-- [ ] 1.5 前端测试：`group_status.js` 新增纯函数 `describeRoundEnd` / `describeDiscussionEnd` /
+- [x] 1.5 前端测试：`group_status.js` 新增纯函数 `describeRoundEnd` / `describeDiscussionEnd` /
   `shouldShowStop` / `shouldApplyChainEvent`（chain_id 守卫）的 JS 用例（`test_group_status_js.py` 同形）；
   设置下拉仅 everyone 可选 unlimited（disabled）；停止按钮可见性/置灰/恢复；`system_entry` 追加时间线；
   390px 头部不溢出（现有浏览器测试模式）。
 
 ## 2. 实现
 
-- [ ] 2.1 `agent/team/models.py`：`DISCUSSION_MODES`、`Room.discussion_mode`、`to_dict/from_dict`。
-- [ ] 2.2 `agent/config.py`：`TeamConfig` 三参数 + `_parse_team_config` 解析校验；`asterwynd.example.yaml` `team:` 示例。
-- [ ] 2.3 `agent/team/orchestrator.py`：`_ChainState` + `_run_discussion` 循环 + `_drive(chain, state)` +
+- [x] 2.1 `agent/team/models.py`：`DISCUSSION_MODES`、`Room.discussion_mode`、`to_dict/from_dict`。
+- [x] 2.2 `agent/config.py`：`TeamConfig` 三参数 + `_parse_team_config` 解析校验；`asterwynd.example.yaml` `team:` 示例。
+- [x] 2.3 `agent/team/orchestrator.py`：`_ChainState` + `_run_discussion` 循环 + `_drive(chain, state)` +
   `_run_slot(chain, state, pid)` 签名 + 停止请求/续轮判定/安全阀/链 teardown + `clock` 注入；
   `RoundResult` 扩展字段；`unlimited` 提示词增强。
-- [ ] 2.4 `web/team.py`：`TeamService.stop_discussion`、房间 create/update 校验、`discussion_*` 状态透出。
-- [ ] 2.5 `web/server.py`：REST stop 端点、房间 WS `stop_discussion` 消息、`room_state` 扩展。
-- [ ] 2.6 `web/static/group.js` + `index.html` + `style.css`：讨论模式设置、停止按钮、状态文案、
+- [x] 2.4 `web/team.py`：`TeamService.stop_discussion`、房间 create/update 校验、`discussion_*` 状态透出。
+- [x] 2.5 `web/server.py`：REST stop 端点、房间 WS `stop_discussion` 消息、`room_state` 扩展。
+- [x] 2.6 `web/static/group.js` + `index.html` + `style.css`：讨论模式设置、停止按钮、状态文案、
   事件处理与 WS/REST 降级。
 - [ ] 2.7 全量回归：`uv run pytest -q`。
 
 ## 3. 规格与文档同步
 
-- [ ] 3.1 `openspec/specs/multi-agent-collaboration/spec.md`：MODIFIED「房间级互斥与轮次终止」、
+- [x] 3.1 `openspec/specs/multi-agent-collaboration/spec.md`：MODIFIED「房间级互斥与轮次终止」、
   MODIFIED「房间应答模式」、ADDED「讨论链自动续轮与收敛」。
-- [ ] 3.2 `openspec/specs/web-ui/spec.md`：MODIFIED「人设与房间的管理入口」（讨论模式字段）、
+- [x] 3.2 `openspec/specs/web-ui/spec.md`：MODIFIED「人设与房间的管理入口」（讨论模式字段）、
   ADDED「群聊讨论链状态与停止讨论控件」。
-- [ ] 3.3 `openspec/specs/configuration/spec.md`：ADDED「群聊讨论链安全阀可配置」。
-- [ ] 3.4 `docs/architecture.md` 群聊小节改「单轮 / 讨论链」终止口径 + 停止与安全阀；`CONTEXT.md` 补「讨论链」；
+- [x] 3.3 `openspec/specs/configuration/spec.md`：ADDED「群聊讨论链安全阀可配置」。
+- [x] 3.4 `docs/architecture.md` 群聊小节改「单轮 / 讨论链」终止口径 + 停止与安全阀；`CONTEXT.md` 补「讨论链」；
   检查 `docs/interview-script/` 相关表述。
-- [ ] 3.5 `openspec/changes/group-unlimited-discussion/workflow-events.jsonl` 补 `current_spec_synced` 事件。
+- [x] 3.5 `openspec/changes/group-unlimited-discussion/workflow-events.jsonl` 补 `current_spec_synced` 事件。
 - [ ] 3.6 实现后独立审阅闭环 `/review-loop` → `reviews/building-review.md`（`## 闭环出口` PASS）。
 
 ## 4. 收尾
