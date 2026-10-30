@@ -16,7 +16,7 @@
 
 ## Bullet 1: AgentLoop 核心循环 — 代码走读
 
-> 简历原文：实现可扩展 AgentLoop 核心循环（message-driven + 快照断点续传），以 7 切面 Hook 协议解耦迭代/LLM 调用/工具执行/错误处理/完成阶段，同构适配 OpenAI / Anthropic 双 Provider，集成 38 个内置工具
+> 简历原文：实现可扩展 AgentLoop 核心循环（message-driven + 快照断点续传），以 7 切面 Hook 协议解耦迭代/LLM 调用/工具执行/错误处理/完成阶段，同构适配 OpenAI / Anthropic 双 Provider，集成 40 个内置工具
 
 ---
 
@@ -33,7 +33,7 @@ for iteration in range(start_iteration, self.max_iterations):  # loop.py:610
 单次迭代的完整流程：
 
 ```
-① _select_tool_schemas()  — 从 38 工具中 Top-K 选 schema 注入 LLM    (:627)
+① _select_tool_schemas()  — 从 40 工具中 Top-K 选 schema 注入 LLM    (:627)
 ② _messages_with_run_context() — 拼接 context block (ContextBuilder)   (:629)
 ③ hooks.before_iteration()     — Hook 切面                            (:630)
 ④ _call_llm()                  — 调 LLM，返回 LLMResponse              (:631)
@@ -261,21 +261,21 @@ else:
 
 ---
 
-### 5. 38 个内置工具
+### 5. 40 个内置工具
 
-**权威清单**：`KNOWN_BUILTIN_TOOL_NAMES`（`agent/tools/factory.py:71-110`）= 恰好 38 个。
+**权威清单**：`KNOWN_BUILTIN_TOOL_NAMES`（`agent/tools/factory.py:72-110`）= 恰好 40 个。
 
 | 类别 | 工具 | 数量 |
 |------|------|------|
 | 文件读写 | Read, Write, Edit, Bash, Grep, Find, ListFiles, InspectGitDiff | 8 |
-| Web 获取 | WebFetch, WebSearch, WebNavigate, WebGetContent, WebScreenshot, WebScroll, WebListTabs, WebSwitchTab, WebCloseTab | 9 |
+| Web 获取 | WebFetch, WebSearch, BrowserNavigate, BrowserGetContent, BrowserScreenshot, BrowserScroll, BrowserListTabs, BrowserSwitchTab, BrowserCloseTab | 9 |
 | LSP 代码理解 | LspDefinition, LspReferences, LspHover, LspDocumentSymbols, LspWorkspaceSymbols, LspDiagnostics | 6 |
 | 代码智能 | RepoMap, SymbolSearch | 2 |
 | 长期记忆 | SaveMemory, RecallMemory, SearchMemory, ResolveMemoryConflict, MemoryGitBackend | 5 |
 | 计划/任务 | ExitPlanMode, UpdatePlan, TaskOutput, TaskStop, TodoWrite | 5 |
-| 其他 | AskUserQuestion, ReadDoc, ActivateSkill | 3 |
+| 其他 | AskUserQuestion, ReadDoc, ActivateSkill, EnterWorktree, ExitWorktree | 5 |
 
-**注意**：38 是 `KNOWN_BUILTIN_TOOL_NAMES` 的数量。实际运行时还有 10 个子 agent 工具（CreateSubagent, RunSubagent, ListSubagents 等）按需动态注册 + MCP 工具动态注入，所以运行时全量可以到 40+，但核心内置集合是 38。
+**注意**：40 是 `KNOWN_BUILTIN_TOOL_NAMES` 的数量（含 worktree 控制与默认关闭的浏览器工具）。实际运行时还有 20 个子 agent/workflow 工具按需动态注册 + MCP 工具动态注入；这些动态工具另计，不改变内置集合 40。
 
 ---
 
@@ -290,7 +290,7 @@ else:
 | `agent/llm.py` | LLM Protocol + BaseLLM + LLMResponse |
 | `agent/openai_llm.py` | OpenAILLM 实现 |
 | `agent/anthropic_llm.py` | AnthropicLLM 实现 + cache_control + 三层降级 |
-| `agent/tools/factory.py` | KNOWN_BUILTIN_TOOL_NAMES (38 个) |
+| `agent/tools/factory.py` | KNOWN_BUILTIN_TOOL_NAMES (40 个) |
 
 ---
 
@@ -307,13 +307,13 @@ else:
 ```
 每次迭代前 (_select_tool_schemas):
 ┌──────────────┐
-│ 38 个工具全量  │
+│ 40 个工具全量  │
 └──────┬───────┘
        │ 分离
   ┌────┴────┐
   │ 稳定层 7 │────────────── 始终注入，排最前，不参与任何筛选
   └─────────┘
-       │ 其余 ~30
+       │ 其余 ~33
   ┌────┴────┐
   │ 质量过滤  │────────── 低分工具从变层候选剔除（软降级）
   └────┬────┘
@@ -371,7 +371,7 @@ Stage 2: 向量精排
   → 取 top top_k=5
 ```
 
-**当前局限性**：38 工具 - 7 稳定层 = ~30 候选，`coarse_k=50` 意味着 BM25 阶段不做筛选，仅排序。这是**前瞻性设计**——为工具数量增长到 100+（大量 MCP 工具接入）预留的。
+**当前局限性**：40 工具 - 7 稳定层 = ~33 候选，`coarse_k=50` 意味着 BM25 阶段不做筛选，仅排序。这是**前瞻性设计**——为工具数量增长到 100+（大量 MCP 工具接入）预留的。
 
 #### Embedding 后端
 
@@ -393,11 +393,11 @@ class EmbeddingProvider(Protocol):
 
 #### 稳定工具集
 
-**文件**：`agent/loop.py:85-87`
+**文件**：`agent/loop.py:104-105`
 
 ```python
 CORE_STABLE_TOOL_NAMES = (
-    "Read", "Edit", "Write", "Bash", "Glob", "Grep", "InspectGitDiff",
+    "Read", "Edit", "Write", "Bash", "Find", "Grep", "InspectGitDiff",
 )
 ```
 
@@ -417,7 +417,7 @@ tail = [name for name, _ in ranked[: self._top_k]]
 return stable_names + tail
 ```
 
-不管什么任务，Read/Edit/Write/Bash/Glob/Grep/InspectGitDiff 永远在工具列表最前面且位置不变。
+不管什么任务，Read/Edit/Write/Bash/Find/Grep/InspectGitDiff 永远在工具列表最前面且位置不变。
 
 #### cache_control 断点
 
@@ -535,7 +535,7 @@ if self._is_quality_degraded(name) and not self._selector.is_stable(name):
 | `agent/tools/registry.py` | ToolRegistry：统一编排 governance 组件 |
 | `agent/embedding/provider.py` | EmbeddingProvider Protocol + NGramEmbedding 默认实现 |
 | `agent/config.py` | ToolSelectionConfig / QualityConfig（默认关闭） |
-| `agent/loop.py:85-87` | CORE_STABLE_TOOL_NAMES |
+| `agent/loop.py:104-105` | CORE_STABLE_TOOL_NAMES |
 | `agent/loop.py:999-1029` | _select_tool_schemas() 注入点 |
 | `agent/loop.py:1097-1163` | _apply_cache_plan / _compute_cache_plan |
 | `agent/anthropic_llm.py:167-194` | AnthropicLLM._apply_cache_plan 实际打断点 |
@@ -953,7 +953,7 @@ if budget is not None:
     hooks.hooks.append(BudgetHook(budget))
 ```
 
-`BudgetHook` 是 per-run 实例化（`:442-446`），每个 run 独立一个 `BudgetTracker`，不共享跨 run 状态。必须实现所有 7 个 Hook 方法（`:80-111`），因为 `HookManager` 按属性名分发，缺方法会抛 `AttributeError`。
+`BudgetHook` 是 per-run 实例化（`:442-446`），每个 run 独立一个 `BudgetTracker`，不共享跨 run 状态。必须实现所有 7 个 Hook 方法（`agent/hooks/manager.py:16-27`），因为 `HookManager` 按属性名分发，缺方法会抛 `AttributeError`。
 
 ---
 
@@ -2397,7 +2397,7 @@ def _find_scope_root(path):
 | `agent/memory/summary.py` | build_summary：~50 token 重要性排序全局摘要 |
 | `agent/tools/builtin/memory.py` | 5 个工具：SaveMemory / RecallMemory / SearchMemory / ResolveMemoryConflict / MemoryGitBackend |
 | `docs/adr/ADR-0002-long-term-memory-reversibility.md` | ADR：mem0 对比、备选方案、最终决策、revisit conditions |
-| `agent/tools/factory.py:71-110` | KNOWN_BUILTIN_TOOL_NAMES（确认 5 个 memory 工具在内置 38 中） |
+| `agent/tools/factory.py:71-110` | KNOWN_BUILTIN_TOOL_NAMES（确认 5 个 memory 工具在内置 40 中） |
 
 ---
 
@@ -3071,7 +3071,7 @@ class CliApprovalHandler:
 
 ## Bullet 7: 全链路可观测体系与 Benchmark 评测闭环 — 代码走读
 
-> 简历原文：建立全链路可观测体系与 Benchmark 评测闭环：TraceRecorder 全链轨迹记录 + CostLedger 三层成本归因 + ErrorClassifier 错误类型自动打标；71 个 coding 任务（33 本地 = 22 A 轨回归基线 + 11 B 轨当前演进 + 38 SWE-bench Verified 子集）在 git worktree / Docker 隔离执行，pass@1/pass^k/成本（cache-aware）与 fault_owner 归因统计，场景×难度分层覆盖矩阵，支持跨 Agent 配对比较与 CI 回归门禁
+> 简历原文：建立全链路可观测体系与 Benchmark 评测闭环：TraceRecorder 全链轨迹记录 + CostLedger 三层成本归因 + ErrorClassifier 错误类型自动打标；72 个 coding 任务（34 本地 = 22 A 轨回归基线 + 12 B 轨当前演进 + 38 SWE-bench Verified 子集）在 git worktree / Docker 隔离执行，pass@1/pass^k/成本（cache-aware）与 fault_owner 归因统计，场景×难度分层覆盖矩阵，支持跨 Agent 配对比较与 CI 回归门禁
 
 ---
 
@@ -3399,7 +3399,7 @@ SCENARIO_ORDER = ("bug-fix", "feature-dev", "refactor", "debug", "integration")
 - 每个场景列（5 枚举）至少有一个本地 A/B 任务
 - **按轨能力覆盖**（`REQUIRED_TRACK_COVERAGE` line 39-43）：`context-planning` / `long-term-memory` / `long-context` 三列必须分别有 **B 轨**任务登记——这是 spec delta 的机械强制
 
-manifest 存储于 `benchmarks/tasks/manifest.json`：`coverage` 段登记 33 个本地任务的能力列覆盖，`verified` 段单独披露 Verified 子集摘要（count / by_repo / by_difficulty，`update_manifest_verified` 由 build-subset 管线维护）。
+manifest 存储于 `benchmarks/tasks/manifest.json`：`coverage` 段登记 33 个本地任务的能力列覆盖（34 个本地任务中 `asterwynd-008-worktree-tools` 尚未入矩阵），`verified` 段单独披露 Verified 子集摘要（count / by_repo / by_difficulty，`update_manifest_verified` 由 build-subset 管线维护）。
 
 ---
 
@@ -3655,23 +3655,23 @@ class VerifierAdapter(Protocol):
 
 ---
 
-### 11. 任务数据集 — 71 个 coding 任务
+### 11. 任务数据集 — 72 个 coding 任务
 
 #### 11.1 任务计数确认（合并 master 后已核实）
 
-`benchmarks/tasks/` 下共有 **73 个 task.json**（33 本地 + 38 Verified + 2 gate-smoke）：
+`benchmarks/tasks/` 下共有 **74 个 task.json**（34 本地 + 38 Verified + 2 gate-smoke）：
 
 | 类别 | 数量 | 说明 |
 |------|------|------|
-| 本地任务（`task_family=local`） | **33** | 22 A 轨回归基线 + 11 B 轨当前演进 |
+| 本地任务（`asterwynd-*`） | **34** | 22 A 轨回归基线 + 12 B 轨当前演进 |
 | SWE-bench Verified 子集（`task_family=swebench`） | **38** | 全部 `track=verified`，dataset = `princeton-nlp/SWE-bench_Verified` |
 | gate-smoke（CI 门禁专用） | 2 | 在 `gate-smoke/` 二级目录，不计入 coding 任务 |
 
-**coding 任务合计 = 71**（33 本地 + 38 Verified）。`run_all()`（runner.py:192-195）对 `benchmarks/tasks` 做一层 `iterdir()`，默认加载全部 71 个；gate-smoke 在二级目录，只有 `benchmark-gate` 命令显式指定才跑。
+**coding 任务合计 = 72**（34 本地 + 38 Verified）。`run_all()`（runner.py:192-195）对 `benchmarks/tasks` 做一层 `iterdir()`，默认加载全部 72 个；gate-smoke 在二级目录，只有 `benchmark-gate` 命令显式指定才跑。
 
-> **数字口径**：上一版口径为 36（26 本地 + 10 SWE-bench 外部）；master 合并后本地任务经 B 轨扩展为 34（22 A + 12 B），后因 `retire-4phase-state-machine`（2026-09-22）退役四阶段状态机删除 B 轨任务 `asterwynd-b03-awaiting-grill-state` 而变为 33（22 A + 11 B）；Verified 子集经 build-subset 管线生成为 38（原 10 + 本机生成 28），合计 71。`docs/benchmark-run-protocol.md` 的协议目标口径为 82–90（A 轨 20–24 + B 轨 12–16 + Verified 50），是升级方向而非现状。
+> **数字口径**：上一版口径为 36（26 本地 + 10 SWE-bench 外部）；master 合并后本地任务经 B 轨扩展为 34（22 A + 12 B）；Verified 子集经 build-subset 管线生成为 38（原 10 + 本机生成 28），合计 72。旧口径 71（33 本地）来自四阶段状态机退役后未计入后续新增 worktree 任务的版本，已作废。`docs/benchmark-run-protocol.md` 的协议目标口径为 82–90（A 轨 20–24 + B 轨 12–16 + Verified 50），是升级方向而非现状。
 
-#### 11.2 本地任务 33 = 22 A 轨 + 11 B 轨
+#### 11.2 本地任务 34 = 22 A 轨 + 12 B 轨
 
 **A 轨·历史重建回归基线（22）**：基于 2026-06 前合入特性的历史重建任务，作为回归基线（有答案泄漏面，结果页强制披露，非公平评测）：
 
@@ -3893,5 +3893,5 @@ uv run asterwynd benchmark benchmarks/tasks \
 | `benchmarks/tasks/manifest.json` | 任务集 manifest — coverage 登记 + anti_cheat_disclosure + verified 摘要 |
 | `benchmarks/baseline.json` | 当前 baseline（fake agent, gate-smoke, success_rate=1.0） |
 | `.github/workflows/ci.yml` | CI pipeline — validate + benchmark-gate + windows-platform 三个 job（阶段 C 后都不再拦合并） |
-| `benchmarks/tasks/` | 73 个 task.json — 33 本地 + 38 Verified + 2 gate-smoke |
+| `benchmarks/tasks/` | 74 个 task.json — 34 本地 + 38 Verified + 2 gate-smoke |
 | `docs/benchmark-run-protocol.md` | 评测运行协议（C3 转正）— 采样/预算/对照口径/披露段/self_check 五门禁 |

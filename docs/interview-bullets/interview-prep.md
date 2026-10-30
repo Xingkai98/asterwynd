@@ -16,7 +16,7 @@
 
 ## Bullet 1 面试讲稿：AgentLoop 核心循环
 
-> 实现可扩展 AgentLoop 核心循环（message-driven + 快照断点续传），以 7 切面 Hook 协议解耦迭代/LLM 调用/工具执行/错误处理/完成阶段，同构适配 OpenAI / Anthropic 双 Provider，集成 38 个内置工具
+> 实现可扩展 AgentLoop 核心循环（message-driven + 快照断点续传），以 7 切面 Hook 协议解耦迭代/LLM 调用/工具执行/错误处理/完成阶段，同构适配 OpenAI / Anthropic 双 Provider，集成 40 个内置工具
 
 ---
 
@@ -28,7 +28,7 @@ Asterwynd 的 AgentLoop 是整个框架的运行时心脏，我在 `agent/loop.p
 
 LLM Provider 这块我设计了一个统一的 LLM Protocol，只要求实现一个 `chat` 方法。OpenAILLM 和 AnthropicLLM 各自实现，关键差异是 Anthropic 路径支持手动打 `cache_control` 断点做 prompt caching，OpenAI 走服务端自动缓存。AnthropicLLM 还有三层降级——cache_control 被拒就去掉重试，vision 被拒就去掉图像重试。
 
-38 个内置工具覆盖文件读写、Web 获取、LSP 代码理解、长期记忆、计划任务等类别，另外还有 10 个子 agent 工具和 MCP 工具可按需动态注册。
+40 个内置工具覆盖文件读写、Web 获取、LSP 代码理解、长期记忆、计划任务等类别，另外还有 20 个子 agent/workflow 工具和 MCP 工具可按需动态注册（动态工具另计）。
 
 ---
 
@@ -68,13 +68,13 @@ LLM Provider 这块我设计了一个统一的 LLM Protocol，只要求实现一
 
 ---
 
-### 追问 4：38 个工具怎么管理注册和生命周期？
+### 追问 4：40 个工具怎么管理注册和生命周期？
 
 **回答（~200 字）：**
 
 工具注册通过 `ToolRegistry` 集中管理，每个工具继承 `Tool` 基类，定义 name、description、parameters（JSON Schema）、parallelizable 标志和 execute 方法。注册时自动做去重检测——对 description 做 embedding 后 cosine 比较，超过 0.7 阈值的标记 `duplicate_of`。
 
-工具分三层：内置工具 38 个（`KNOWN_BUILTIN_TOOL_NAMES`），子 agent 工具 10 个（按需注册），MCP 工具（通过 MCP 协议动态发现和注入）。每轮迭代前通过 ToolSelector 做 BM25+embedding 两阶段检索，选出 Top-K 工具 schema 注入 LLM。稳定工具层 7 个永远常驻。
+工具分三层：内置工具 40 个（`KNOWN_BUILTIN_TOOL_NAMES`），子 agent/workflow 工具 20 个（按需注册），MCP 工具（通过 MCP 协议动态发现和注入）。每轮迭代前通过 ToolSelector 做 BM25+embedding 两阶段检索，选出 Top-K 工具 schema 注入 LLM。稳定工具层 7 个永远常驻。
 
 工具生命周期跟 AgentLoop 绑定——loop 创建时初始化 registry，loop 销毁时 registry 随之释放。不做跨 session 的工具缓存，因为不同 session 可能有不同的 MCP 连接和模式配置。
 
@@ -100,13 +100,13 @@ LLM Provider 这块我设计了一个统一的 LLM Protocol，只要求实现一
 
 ### 主讲述稿（~400 字）
 
-这个功能要解决一个很实际的问题：38 个工具全量注入给 LLM 成本太高——每个工具的 JSON Schema 占几百 token，38 个就是好几千，而且大部分工具当前任务根本用不到。我的方案是每次迭代只选最相关的几个注入。
+这个功能要解决一个很实际的问题：40 个工具全量注入给 LLM 成本太高——每个工具的 JSON Schema 占几百 token，40 个就是好几千，而且大部分工具当前任务根本用不到。我的方案是每次迭代只选最相关的几个注入。
 
 代码在 `agent/tools/governance/` 目录。核心是 `ToolSelector` 类——每次 LLM 调用前，用"用户最新消息 + 最近 3 个工具调用名"拼成 query，然后走两阶段检索。
 
-第一个设计决策是"稳定层"——Read、Edit、Write、Bash、Glob、Grep、InspectGitDiff 这 7 个工具在任何 coding 任务中都会用到，我让它们永远排在工具列表最前面且位置固定。因为 schema 字节级不变，可以在上面打 `cache_control` 断点，Anthropic API 就不会重复计算这部分的 KV cache。
+第一个设计决策是"稳定层"——Read、Edit、Write、Bash、Find、Grep、InspectGitDiff 这 7 个工具在任何 coding 任务中都会用到，我让它们永远排在工具列表最前面且位置固定。因为 schema 字节级不变，可以在上面打 `cache_control` 断点，Anthropic API 就不会重复计算这部分的 KV cache。
 
-剩下 ~30 个变层工具走两阶段筛选。BM25 粗筛做关键词匹配，取 top 50。向量精排用 embedding 做 cosine 相似度重排，取 top 5。最终注入 LLM 的是 7 稳定 + 5 变层 = 12 个 tool schema。
+剩下 ~33 个变层工具走两阶段筛选。BM25 粗筛做关键词匹配，取 top 50。向量精排用 embedding 做 cosine 相似度重排，取 top 5。最终注入 LLM 的是 7 稳定 + 5 变层 = 12 个 tool schema。
 
 还有两个辅助机制。语义去重在每个新工具注册时跟已有工具做 cosine 比较，超过阈值标记 `duplicate_of`，软标记不影响功能。质量评分用 50 次滑动窗口——成功率 + 耗时因子 + 审批率的加权——低于 0.4 就从变层候选剔除，但稳定层不受影响、全量 schema 仍可见。这就是"软降级"。
 
@@ -292,7 +292,7 @@ Tail-first 截断是从低优先级尾部开始裁，而不是均匀缩减所有
 
 **回答（~250 字）：**
 
-"字节级不变"由三层保障。第一层是 static 属性——P0 和 P1 的渲染输出由 `(name, cwd, mode, user_system_prompt)` 决定。只要这四个值不变，`_static_cache_key` 命中缓存，返回的就是字节级相同的内容。第二层是 cacheable 层不参与预算截断——不管 context 多满，P0/P1/MemoryIndex 永远不会被截断，所以它们在 messages 中的位置和内容始终确定。第三层是工具 schema 稳定——当 Selector OFF 时，全量 38 个工具 schema 按固定顺序排列，字节级不变。
+"字节级不变"由三层保障。第一层是 static 属性——P0 和 P1 的渲染输出由 `(name, cwd, mode, user_system_prompt)` 决定。只要这四个值不变，`_static_cache_key` 命中缓存，返回的就是字节级相同的内容。第二层是 cacheable 层不参与预算截断——不管 context 多满，P0/P1/MemoryIndex 永远不会被截断，所以它们在 messages 中的位置和内容始终确定。第三层是工具 schema 稳定——当 Selector OFF 时，全量 40 个工具 schema 按固定顺序排列，字节级不变。
 
 以下场景会打破缓存：用户切换 mode（build → plan），cwd 在 subagent spawn 到新 workspace 时变化，user_system_prompt 被用户修改，或者 Selector ON 时变层工具变了位置。这些场景通常发生在会话开始或重大转折点，不在高频迭代中。
 
@@ -504,7 +504,7 @@ MCP 工具是外部注入的，不在 Asterwynd 的编译时安全控制范围�
 
 ## Bullet 7 面试讲稿：全链路可观测体系与 Benchmark
 
-> 建立全链路可观测体系与 Benchmark 评测闭环：TraceRecorder 全链轨迹记录 + CostLedger 三层成本归因 + ErrorClassifier 错误类型自动打标；71 个 coding 任务（33 本地 = 22 A 轨回归基线 + 11 B 轨当前演进 + 38 SWE-bench Verified 子集）在 git worktree / Docker 隔离执行，pass@1/pass^k/成本（cache-aware）与 fault_owner 归因统计，场景×难度分层覆盖矩阵，支持跨 Agent 配对比较与 CI 回归门禁
+> 建立全链路可观测体系与 Benchmark 评测闭环：TraceRecorder 全链轨迹记录 + CostLedger 三层成本归因 + ErrorClassifier 错误类型自动打标；72 个 coding 任务（34 本地 = 22 A 轨回归基线 + 12 B 轨当前演进 + 38 SWE-bench Verified 子集）在 git worktree / Docker 隔离执行，pass@1/pass^k/成本（cache-aware）与 fault_owner 归因统计，场景×难度分层覆盖矩阵，支持跨 Agent 配对比较与 CI 回归门禁
 
 ---
 
@@ -518,7 +518,7 @@ CostLedger 是成本归因系统，bill 方法返回三层聚合——by_session
 
 ErrorClassifier 是错误自动打标，5 大类：PERMISSION_DENIED、NETWORK_TIMEOUT、MODEL_ERROR、PARAMETER_ERROR、UNKNOWN。三级优先级分类——结构化 error_type 最优先（17 条映射），finish_reason 次之，文本正则 fallback 兜底。我用的是确定性规则而非 LLM 分类，保证打标的稳定性和零成本。
 
-Benchmark 评测侧，71 个 coding 任务——33 个本地任务分双轨（22 个 A 轨历史重建回归基线 + 11 个 B 轨当前演进），38 个 SWE-bench Verified 子集覆盖 requests/flask/pytest/sympy/seaborn/pylint 外部仓库。本地任务通过 git worktree 隔离执行，task 文件隐藏防止作弊；SWE-bench 通过 SwebenchAdapter 调用官方 Docker 验证器。指标分三层：pass@1 是用户实际获得的有效轮通过率，pass@k 是能力上限，pass^k 是全部有效轮成功的可靠性；成本用 cache-aware 定价算 $/resolved-task，失败轮次用 reason × fault_owner 交叉表归因。任务按 scenario × difficulty 双标签分层，套件级能力覆盖矩阵机械校验；跨 Agent 对比用配对统计（per-task delta + 差异 CI + win-rate）。CI 回归门禁检查 success_rate 绝对下降不超过 5pp 和 p95 延迟回归不超过 5%。
+Benchmark 评测侧，72 个 coding 任务——34 个本地任务分双轨（22 个 A 轨历史重建回归基线 + 12 个 B 轨当前演进），38 个 SWE-bench Verified 子集覆盖 requests/flask/pytest/sympy/seaborn/pylint 外部仓库。本地任务通过 git worktree 隔离执行，task 文件隐藏防止作弊；SWE-bench 通过 SwebenchAdapter 调用官方 Docker 验证器。指标分三层：pass@1 是用户实际获得的有效轮通过率，pass@k 是能力上限，pass^k 是全部有效轮成功的可靠性；成本用 cache-aware 定价算 $/resolved-task，失败轮次用 reason × fault_owner 交叉表归因。任务按 scenario × difficulty 双标签分层，套件级能力覆盖矩阵机械校验；跨 Agent 对比用配对统计（per-task delta + 差异 CI + win-rate）。CI 回归门禁检查 success_rate 绝对下降不超过 5pp 和 p95 延迟回归不超过 5%。
 
 ---
 
@@ -548,13 +548,13 @@ Benchmark 评测侧，71 个 coding 任务——33 个本地任务分双轨（22
 
 ---
 
-### 追问 3：33 个本地任务怎么设计出来的？A 轨和 B 轨怎么分工？
+### 追问 3：34 个本地任务怎么设计出来的？A 轨和 B 轨怎么分工？
 
 **回答（~250 字）：**
 
-33 个本地任务分双轨。**A 轨是历史重建回归基线（22 个）**——从本仓库 2026-06 前合入特性的 git 历史重建，任务是"回到过去改同一个 bug / 加同一个功能"，验证命令是确定性的 pytest。它的定位是回归基线而非公平评测：agent 在完整 git 历史里运行，base_commit 之后的提交可见，有答案泄漏面，所以结果页必须披露"A 轨非公平评测"。
+34 个本地任务分双轨。**A 轨是历史重建回归基线（22 个）**——从本仓库 2026-06 前合入特性的 git 历史重建，任务是"回到过去改同一个 bug / 加同一个功能"，验证命令是确定性的 pytest。它的定位是回归基线而非公平评测：agent 在完整 git 历史里运行，base_commit 之后的提交可见，有答案泄漏面，所以结果页必须披露"A 轨非公平评测"。
 
-**B 轨是当前演进（11 个）**——基于当前 HEAD 的真实缺陷和增强构造，是面试核心。覆盖面包括沙箱执行器、benchmark CLI、LSP diagnostics、ListRunningBenchmarks 只读工具装配链、结果页 track 分组、SwebenchAdapter model name 转义回归、memory project scope 隔离、记忆注入归属下沉等。B 轨任务刻意不给文件路径，只给行为症状，agent 需要自己通读管线定位；验证是确定性 test_command + test.patch 新增回归断言，base 红/gold 绿可复现。
+**B 轨是当前演进（12 个）**——基于当前 HEAD 的真实缺陷和增强构造，是面试核心。覆盖面包括沙箱执行器、benchmark CLI、LSP diagnostics、ListRunningBenchmarks 只读工具装配链、结果页 track 分组、SwebenchAdapter model name 转义回归、memory project scope 隔离、记忆注入归属下沉、worktree 工具 smoke 等。B 轨任务刻意不给文件路径，只给行为症状，agent 需要自己通读管线定位；验证是确定性 test_command + test.patch 新增回归断言，base 红/gold 绿可复现。
 
 关键设计是每个任务有可自动验证的正确性标准，且 task 文件在 agent 执行前被移动到 .hidden 目录——防止 agent 读取测试文件"作弊"。worktree 隔离保证任务间的文件变更不互相污染。
 

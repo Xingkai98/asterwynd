@@ -8,7 +8,7 @@
 
 ## 0. 30 秒电梯 pitch（开场必须背熟）
 
-> "我独立实现了一个 coding agent 系统 **Asterwynd**，约 2.7 万行生产代码、1700+ 自动化测试、71 任务评测闭环。它的核心是一个消息驱动的 AgentLoop，围绕它做了完整的能力纵深：上下文工程（8 源分层注入 + 稳定前缀命中 Prefix Cache + L1/L2 分层压缩）、工具系统（38 内置工具 + 动态 Top-K 选择 + 质量软降级）、长期记忆（LLM 写时三路去重 + importance×recency 衰减 + git 可逆写入）、多 Agent 编排（4 种模式 + 消息总线 + 预算硬 kill + 快照恢复）、3 层纵深防御安全体系，以及全链路可观测 + Benchmark 回归门禁。每条能力线都能讲清设计取舍和踩过的坑，有 ADR 记录决策。"
+> "我独立实现了一个 coding agent 系统 **Asterwynd**，约 2.7 万行生产代码、1700+ 自动化测试、72 任务评测闭环。它的核心是一个消息驱动的 AgentLoop，围绕它做了完整的能力纵深：上下文工程（8 源分层注入 + 稳定前缀命中 Prefix Cache + L1/L2 分层压缩）、工具系统（40 内置工具 + 动态 Top-K 选择 + 质量软降级）、长期记忆（LLM 写时三路去重 + importance×recency 衰减 + git 可逆写入）、多 Agent 编排（4 种模式 + 消息总线 + 预算硬 kill + 快照恢复）、3 层纵深防御安全体系，以及全链路可观测 + Benchmark 回归门禁。每条能力线都能讲清设计取舍和踩过的坑，有 ADR 记录决策。"
 
 **关键叙事要点**：
 1. 不是堆功能，是每条线做深到"能讲出取舍"。
@@ -24,7 +24,7 @@
 | **定位** | local、benchmarkable 的 coding agent，面向大厂 Agent 开发岗位的能力证明项目 |
 | **主线** | Agent 运行时 → 工具调用 → 上下文 → 记忆 → 多 Agent → 可观测 → 评测闭环 |
 | **不是** | 不是通用 agent 框架、不是复刻 Claude Code 功能清单（Q03 展开） |
-| **验证** | 71 任务（33 本地 + 38 SWE-bench）+ bootstrap CI + CI 回归门禁 |
+| **验证** | 72 任务（34 本地 + 38 SWE-bench）+ bootstrap CI + CI 回归门禁 |
 
 ---
 
@@ -44,7 +44,7 @@
 
 ### Bullet 2 · 动态工具编排
 
-- **讲法**："38 个内置工具全塞给 LLM 浪费 token。用 BM25 粗筛 50 → embedding 精排取 Top-K=5 注入；7 个核心工具构成稳定层、恒在前且字节不变，保住 Prefix Cache 命中；注册时语义去重、运行时质量评分软降级。"
+- **讲法**："40 个内置工具全塞给 LLM 浪费 token。用 BM25 粗筛 50 → embedding 精排取 Top-K=5 注入；7 个核心工具构成稳定层、恒在前且字节不变，保住 Prefix Cache 命中；注册时语义去重、运行时质量评分软降级。"
 - **入口**：`agent/tools/governance/selector.py:66`；接线 `agent/tools/factory.py:113`；注入点 `agent/loop.py:986` `_select_tool_schemas`。
 - **拷打点**：
   - "稳定层为什么不占 Top-K 预算？" → 稳定前缀必须字节不变才能命中缓存，变层才是变化的尾巴（`selector.py:107`）。
@@ -93,7 +93,7 @@
 
 ### Bullet 7 · 可观测 + Benchmark
 
-- **讲法**："TraceRecorder 全链 step 流（run_started→llm_iteration→tool_call→approval→sandbox→compaction→completion）；CostLedger 按 session/phase/tool 三维成本归因；ErrorClassifier 结构化错误分类（4 类 + unknown 兜底，审批拒绝系归到 permission_denied）。评测 71 任务（33 本地 + 38 SWE-bench Verified）在 git worktree / Docker 隔离执行，bootstrap 95% CI（固定 seed 可复现），pass^k / cost@pass / fault_owner / 场景×难度分层 / 配对比较均已落地，CI 回归门禁对比 baseline，SWE-bench 引用带污染披露。升级目标 ~90 剩余部分 = Verified 扩到 50。"
+- **讲法**："TraceRecorder 全链 step 流（run_started→llm_iteration→tool_call→approval→sandbox→compaction→completion）；CostLedger 按 session/phase/tool 三维成本归因；ErrorClassifier 结构化错误分类（4 类 + unknown 兜底，审批拒绝系归到 permission_denied）。评测 72 任务（34 本地 + 38 SWE-bench Verified）在 git worktree / Docker 隔离执行，bootstrap 95% CI（固定 seed 可复现），pass^k / cost@pass / fault_owner / 场景×难度分层 / 配对比较均已落地，CI 回归门禁对比 baseline，SWE-bench 引用带污染披露。升级目标 ~90 剩余部分 = Verified 扩到 50。"
 - **入口**：`agent/trace_recorder.py`；`agent/cost_tracker.py`；`agent/observability.py`；`benchmarks/{runner,statistics,gate,compare}.py`。
 - **拷打点**：
   - "评测怎么防止 agent 作弊？" → `_hide_agent_invisible_task_files` 评测前藏掉 task.json（`runner.py:632`）。
@@ -109,13 +109,13 @@
 |------|--------|------|
 | 代码行数 | 26875 行（agent/ 目录） | `find agent -name "*.py" \| xargs cat \| wc -l` |
 | 自动化测试 | 148 测试文件 / ~1997 测试函数 | `tests/` |
-| 内置工具 | 38 个（KNOWN_BUILTIN_TOOL_NAMES 已知名数，含默认关闭的浏览器工具） | `agent/tools/factory.py` `KNOWN_BUILTIN_TOOL_NAMES` |
-| 全量工具（含 MCP/subagent） | 40+（38 内置已知名数含默认关闭的浏览器工具 + 10 子代理控制 + MCP 按需动态挂载） | 同上 + `loop.py:358` |
+| 内置工具 | 40 个（KNOWN_BUILTIN_TOOL_NAMES 已知名数，含默认关闭的浏览器工具与 worktree 控制） | `agent/tools/factory.py` `KNOWN_BUILTIN_TOOL_NAMES` |
+| 全量工具（含 MCP/subagent） | 动态工具另计：40 内置 + 20 子代理/workflow + MCP 按需动态挂载 | 同上 + `loop.py:425-460` |
 | 上下文源 | 8 个 | `loop.py:1339` |
 | Hook 切面 | 7 个 | `hooks/manager.py:15` |
 | 编排模式 | 4 种 | `subagent/patterns.py:203` |
-| 评测任务 | 71（33 本地 + 38 SWE-bench） | `benchmarks/tasks/` |
-| 评测任务（升级目标） | ~90（A 轨 20–24 + B 轨 12–16 + Verified 50；当前已落 71，剩余 = Verified 扩到 50） | C1 `evaluation-task-spec` |
+| 评测任务 | 72（34 本地 + 38 SWE-bench） | `benchmarks/tasks/` |
+| 评测任务（升级目标） | ~90（A 轨 20–24 + B 轨 12–16 + Verified 50；当前已落 72，剩余 = Verified 扩到 50） | C1 `evaluation-task-spec` |
 | pass^k | 全部 k 次成功（可靠性指标） | statistics.py 新增聚合（C2） |
 | cost@pass | $/resolved-task，cache-aware 四档定价 | cost_tracker 扩展（C2/C3） |
 | fault_owner | {agent, task, environment, unknown} | C2 |
@@ -131,7 +131,7 @@
 | 回归门禁 | 成功率 drop >5pp；p95 基线×1.05+1s 绝对下限 | `gate.py:34-35` |
 | 默认超时 | Bash 30s；LLM 流式 60s / 非流式 180s | `sandbox/process_backend.py:72`；`llm.py:105` |
 
-> **口径要点**：简历已改为"38 个内置工具"（精确数）。若被追问"为什么不是 40+"，答"38 内置 + MCP 和子代理控制工具动态挂载后到 40+"。
+> **口径要点**：简历已改为"40 个内置工具"（精确数）。若被追问"为什么不是 40+"，答"40 个是内置工具集合；MCP 和子代理/workflow 工具另有 20 个按需动态挂载，不改变内置数"（源码 KNOWN_BUILTIN_TOOL_NAMES=40）。
 
 ---
 
@@ -153,6 +153,6 @@
 ## 5. 简历口径记录
 
 - 走读共核实 7 条 bullet，**无硬错误**。
-- ✅ 本次走读修正：bullet 1 "40+ 内置工具" → "38 个内置工具"（精确数），已重编译为 1 页 PDF。
+- ✅ 本次走读修正：bullet 1 "40+ 内置工具" → "40 个内置工具"（精确数，2026-10-30 按源码 KNOWN_BUILTIN_TOOL_NAMES 复核）。
 - 之前已修正（历史）：37→36+ 任务、41→40+ 工具、移除"减少上下文膨胀 40%"、"6 种错误类型"去数字化、fail-closed 归位、双层→双后端。
 - 待用户确认：面试加分点（评测防作弊、guardrail 不是 boundary 等）是否整合进简历。

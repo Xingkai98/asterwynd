@@ -102,7 +102,7 @@ def _default_ledger_path() -> str:
 # These tools are always injected (selector ON) and sort first; their schemas
 # are byte-stable so the tools segment stays cacheable.
 CORE_STABLE_TOOL_NAMES = (
-    "Read", "Edit", "Write", "Bash", "Glob", "Grep", "InspectGitDiff",
+    "Read", "Edit", "Write", "Bash", "Find", "Grep", "InspectGitDiff",
 )
 
 

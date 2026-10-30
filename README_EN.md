@@ -106,7 +106,7 @@ The biggest cognitive trap in security is treating "regex validation" as a bound
 Once tools multiply, full injection both wastes tokens and dilutes attention. Asterwynd does **dynamic Top-K selection**:
 
 - **Two-stage recall**: BM25 coarse filter to 50 -> embedding re-rank to **Top-K = 5** injected into the current LLM call.
-- **Stable core layer**: the registered core tools in `CORE_STABLE_TOOL_NAMES` (`Read`/`Edit`/`Write`/`Bash`/`Grep`/`InspectGitDiff`) are always first and byte-identical, **not counted against the Top-K budget** -- the stable prefix preserves the Prompt Cache, and only the tail varies.
+- **Stable core layer**: the registered core tools in `CORE_STABLE_TOOL_NAMES` (`Read`/`Edit`/`Write`/`Bash`/`Find`/`Grep`/`InspectGitDiff`, 7 tools) are always first and byte-identical, **not counted against the Top-K budget** -- the stable prefix preserves the Prompt Cache, and only the tail varies.
 - **Quality soft-degradation**: runtime scoring by "success rate / latency / approval rate = 0.5 / 0.3 / 0.2" (window 50, threshold 0.4); low-scoring tools drop out of the "variable layer" candidates -- **soft degradation, not disabling**: the schema remains visible and callable, and the permission model is untouched.
 - **Zero-dependency default**: built-in NGramEmbedding, swappable for a real embedding provider.
 

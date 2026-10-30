@@ -106,7 +106,7 @@
 工具一多，全量注入既浪费 token 又稀释注意力。Asterwynd 做**动态 Top-K 选择**：
 
 - **两段式召回**：BM25 粗筛 50 → embedding 精排取 **Top-K = 5** 注入本次 LLM 调用。
-- **稳定核心层**：`CORE_STABLE_TOOL_NAMES` 里实际注册的核心工具（`Read`/`Edit`/`Write`/`Bash`/`Grep`/`InspectGitDiff`）恒在前且字节不变，**不占 Top-K 预算**——稳定前缀保住 Prompt Cache，变化只发生在尾部。
+- **稳定核心层**：`CORE_STABLE_TOOL_NAMES` 里实际注册的核心工具（`Read`/`Edit`/`Write`/`Bash`/`Find`/`Grep`/`InspectGitDiff`，7 个）恒在前且字节不变，**不占 Top-K 预算**——稳定前缀保住 Prompt Cache，变化只发生在尾部。
 - **质量软降级**：运行时按「成功率 / 耗时 / 审批率 = 0.5 / 0.3 / 0.2」评分（窗口 50、阈值 0.4），低分工具退出「变化层」候选——**是软降级不是禁用**，schema 仍可见、仍可调用，权限模型不动。
 - **零依赖默认**：内置 NGramEmbedding，可换真 embedding provider。
 

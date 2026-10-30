@@ -1,6 +1,6 @@
 # W01 · AgentLoop 核心循环 + Hook 协议 + 双 Provider
 
-**对应简历 bullet 1**：*"实现可扩展 AgentLoop 核心循环（message-driven + 快照断点续传），以 7 切面 Hook 协议解耦迭代/LLM 调用/工具执行/错误处理/完成阶段，同构适配 OpenAI / Anthropic 双 Provider，集成 40+ 个内置工具"*
+**对应简历 bullet 1**：*"实现可扩展 AgentLoop 核心循环（message-driven + 快照断点续传），以 7 切面 Hook 协议解耦迭代/LLM 调用/工具执行/错误处理/完成阶段，同构适配 OpenAI / Anthropic 双 Provider，集成 40 个内置工具"*
 
 ## 代码入口
 
@@ -74,7 +74,7 @@ class Hook(Protocol):
     async def on_completion(self, result) -> None
 ```
 
-覆盖 5 个阶段（迭代/LLM 调用/工具执行前后/错误/完成），`HookManager` 按注册顺序**同步串行**。内置：LoggingHook / TracingHook / RetryHook（唯一行为修改型，仅非 Bash 工具）/ TokenBudgetHook。
+7 个切面覆盖 5 个阶段组（迭代/LLM 调用/工具执行前后/错误/完成），`HookManager` 按注册顺序**同步串行**。内置：LoggingHook / TracingHook / RetryHook（唯一行为修改型，仅非 Bash 工具）/ TokenBudgetHook。
 
 ### 双 Provider 同构
 
@@ -95,7 +95,7 @@ LLM (Protocol, llm.py:35) ← 只约束 async chat(messages, tools, model)
 
 | 简历 | 核实 | 结论 |
 |------|------|------|
-| "40+ 内置工具" | `KNOWN_BUILTIN_TOOL_NAMES` = **38**（factory.py:71），全开 +10 子代理控制 + MCP 按需 → 40+ | ⚠️ 口径偏紧 |
+| "40 内置工具" | `KNOWN_BUILTIN_TOOL_NAMES` = **40**（factory.py:72，含 EnterWorktree/ExitWorktree） | ✅ |
 | "7 切面 Hook 协议" | 正好 7 个方法 | ✅ |
 | "message-driven + 快照断点续传" | messages 唯一主状态 + resume_snapshot | ✅ |
 

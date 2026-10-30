@@ -29,7 +29,7 @@ query（最近 user 消息 + 最近 3 个工具名）
 ```
 
 关键细节：
-- **稳定层不占 Top-K 预算**（selector.py:107）：核心工具 `CORE_STABLE_TOOL_NAMES`（loop.py:85-87：Read/Edit/Write/Bash/Glob/Grep/InspectGitDiff 7 个）永远注入且排最前，schema 字节稳定 → 保 Prefix Cache 命中。
+- **稳定层不占 Top-K 预算**（selector.py:107）：核心工具 `CORE_STABLE_TOOL_NAMES`（loop.py:104-105：Read/Edit/Write/Bash/Find/Grep/InspectGitDiff 7 个）永远注入且排最前，schema 字节稳定 → 保 Prefix Cache 命中。
 - **默认 embedding 零依赖**：`NGramEmbedding`（embedding/provider.py:42，字符 n-gram 哈希 2048 维），通过 `EmbeddingProvider` Protocol 可换真 embedding。
 - **延迟预算**（selector.py:31）：`latency_budget_ms=50`，超时只记录不 block 主循环。
 - **无 selector 降级**（loop.py:999-1001）：回退 `get_all_schemas()`（全量 + mode 过滤）。
