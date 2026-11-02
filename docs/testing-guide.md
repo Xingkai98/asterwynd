@@ -209,6 +209,7 @@ uv run python run_infer.py \
 ## 必须守住的协议
 
 - assistant message 如果包含 `tool_calls`，必须保留匹配的 tool result。
+- 被打断的 run（取消/异常）必须在 run 起点/finally 补齐配对，重复修复幂等；正常链不得产生合成结果或 `tool_pairing_repaired` 事件（issue #304）。
 - `max_iterations` 不能把最后一个 tool result 包装成 assistant 最终回复。
 - 最终 assistant 回复需要进入消息历史，避免多轮对话复读。
 - Memory compact 不能破坏 tool-call / tool-result 相邻链。

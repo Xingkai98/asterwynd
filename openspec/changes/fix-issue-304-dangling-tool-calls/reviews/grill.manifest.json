@@ -1,0 +1,14 @@
+{
+  "schema": "witnessloop/review-manifest@v1",
+  "change_id": "fix-issue-304-dangling-tool-calls",
+  "stage": "grill",
+  "reviewer_run_id": "fb029c8c-4f40-4fbc-8dfc-e1daff8bc052",
+  "author_run_id": "c4d2521c-1805-4c54-ac95-dcc4a4ca26a4",
+  "base_sha": "604b56ccb488bc9753b5be89f925a5f30f96d268",
+  "head_sha": "25fe47bfe4f258581c95f852118c0091446ce87d",
+  "tasks_hash": "9c2e1fc3f2e2b39be8bf7f35e82738b0cdb8a2daa0cb6652a5106dd367f236b8",
+  "spec_hash": "d6377be7ac88e85e4beb404b59fb1400bdceb7355c753f578626b8c4cd6ee7fd",
+  "diff_hash": "ef0146ff338e8ce9eb1e67283f55e99cca702f701ebd66ac51735263633cda71",
+  "report_hash": "32ea073983da38bca737537ba2180cc68a3f6f1475ee34ab073c721ce505564d",
+  "report_path": "reviews/grill-design.md"
+}

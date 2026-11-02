@@ -3,7 +3,7 @@ import json as _json
 import logging
 from typing import Optional, TYPE_CHECKING
 
-from agent.llm import BaseLLM, LLMResponse, LLMStreamEvent, ToolCallDelta, Usage, supports_vision, vision_mode, _messages_have_images, _is_400_error, sanitize_payload_for_logging
+from agent.llm import BaseLLM, LLMResponse, LLMStreamEvent, ToolCallDelta, Usage, raise_for_status_with_body, supports_vision, vision_mode, _messages_have_images, _is_400_error, sanitize_payload_for_logging
 from agent.message import Message, ReasoningBlock, TextBlock, ImageBlock, ContentBlock, extract_text
 
 if TYPE_CHECKING:
@@ -84,7 +84,7 @@ class OpenAILLM(BaseLLM):
                 f"\nResponse body: {error_body}"
             )
 
-        response.raise_for_status()
+        await raise_for_status_with_body(response)
         data = response.json()
 
         usage_data = data.get("usage", {})

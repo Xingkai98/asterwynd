@@ -20,6 +20,48 @@ def _is_sse_stream_end(data_str: str) -> bool:
     return data_str.strip() == _SSE_STREAM_END_SENTINEL
 
 
+#: HTTP error body attribute attached to ``httpx.HTTPStatusError`` (issue #304).
+#: Keeps the exception type/retry semantics unchanged while preserving the
+#: provider body for diagnostics.
+HTTP_BODY_ATTRIBUTE = "_asterwynd_http_body"
+
+
+async def raise_for_status_with_body(response: httpx.Response) -> None:
+    """``response.raise_for_status()`` that preserves the response body.
+
+    Streaming responses are not read by httpx before ``raise_for_status``;
+    read the body first so ``_http_error_text`` can return it. Non-streaming
+    responses are already read, and ``aread()`` is idempotent. The body is
+    attached as an attribute (not wrapped/retyped) so existing 400 retry
+    detection keeps working.
+    """
+    status = getattr(response, "status_code", None)
+    if not isinstance(status, int) or status < 400:
+        # MagicMock / 非标准 response：保持既有行为，不尝试读 body。
+        response.raise_for_status()
+        return
+
+    try:
+        await response.aread()
+    except Exception:  # noqa: BLE001 - 读不到 body 不能替代原始 HTTP 错误
+        pass
+
+    body = ""
+    try:
+        body = response.text or ""
+    except Exception:  # noqa: BLE001 - 同上
+        pass
+
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        try:
+            setattr(exc, HTTP_BODY_ATTRIBUTE, body)
+        except Exception:  # noqa: BLE001 - 属性附加失败不改变异常
+            pass
+        raise
+
+
 @dataclass
 class ToolCallDelta:
     id: str
@@ -133,7 +175,7 @@ class BaseLLM:
         """SSE 流式请求，yield (event_type, data_dict) tuples。"""
         client = await self._get_client()
         async with client.stream("POST", url, json=json) as response:
-            response.raise_for_status()
+            await raise_for_status_with_body(response)
             event_type = None
             async for line in response.aiter_lines():
                 if line.startswith("event: "):
