@@ -5,10 +5,10 @@
   "reviewer_run_id": "791516ea-8172-478f-aa70-c265813eb509",
   "author_run_id": "c4d2521c-1805-4c54-ac95-dcc4a4ca26a4",
   "base_sha": "604b56ccb488bc9753b5be89f925a5f30f96d268",
-  "head_sha": "b8bb54f8468cdb78e46e37adc4afbac55556dd33",
+  "head_sha": "25fe47bfe4f258581c95f852118c0091446ce87d",
   "tasks_hash": "9c2e1fc3f2e2b39be8bf7f35e82738b0cdb8a2daa0cb6652a5106dd367f236b8",
   "spec_hash": "d6377be7ac88e85e4beb404b59fb1400bdceb7355c753f578626b8c4cd6ee7fd",
-  "diff_hash": "8c181da652e9d2744bdbe1011c4956af40dc03fe977926b271caf7bba98b3f5d",
+  "diff_hash": "ef0146ff338e8ce9eb1e67283f55e99cca702f701ebd66ac51735263633cda71",
   "report_hash": "d7edec2c0a8e8523db523ef0dfa18455ee0172591cef0fcd641fe92ac8a65b7b",
   "report_path": "reviews/building-review.md"
 }
