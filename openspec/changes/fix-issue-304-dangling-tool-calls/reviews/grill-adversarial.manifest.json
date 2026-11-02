@@ -1,0 +1,14 @@
+{
+  "schema": "witnessloop/review-manifest@v1",
+  "change_id": "fix-issue-304-dangling-tool-calls",
+  "stage": "grill-adversarial",
+  "reviewer_run_id": "581c8222-240e-4e85-8120-cb16810e1adc",
+  "author_run_id": "c4d2521c-1805-4c54-ac95-dcc4a4ca26a4",
+  "base_sha": "604b56ccb488bc9753b5be89f925a5f30f96d268",
+  "head_sha": "b8bb54f8468cdb78e46e37adc4afbac55556dd33",
+  "tasks_hash": "9c2e1fc3f2e2b39be8bf7f35e82738b0cdb8a2daa0cb6652a5106dd367f236b8",
+  "spec_hash": "d6377be7ac88e85e4beb404b59fb1400bdceb7355c753f578626b8c4cd6ee7fd",
+  "diff_hash": "8c181da652e9d2744bdbe1011c4956af40dc03fe977926b271caf7bba98b3f5d",
+  "report_hash": "ecafa21bc73a7c05f7f6b179f5fec9caf9547a55c232ad47ccd143c260cd4949",
+  "report_path": "reviews/grill-adversarial.md"
+}
