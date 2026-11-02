@@ -117,10 +117,6 @@
 
 ## 未实现队列
 
-### 第二十二批：会话中断后的 tool-call 配对自愈与 LLM 错误诊断（#304）
-
-- `fix-issue-304-dangling-tool-calls`（issue [#304](https://github.com/Xingkai98/asterwynd/issues/304)）：**设计阶段，待实现**。run 在「assistant `tool_calls` 已写入、`tool_result` 未写回」之间被取消/重启/群聊成员 240s 超时打断，消息链留下悬空 `tool_use`；下一次请求被 Anthropic/DeepSeek 400 拒绝，会话永久不可用（普通 Chat 与群聊同源，群聊放大）。**方案**：run 起点（`AgentLoop._run`，resume 重建后）与 `run()` finally 落盘前调用同一纯函数 `repair_tool_call_pairing`——为缺失 id 补**确定性、明确标记为合成**的 `tool_result`（不伪造成功、幂等、正常链零改动、发 `tool_pairing_repaired` 事件）；finally 仅 best-effort（不覆盖 SIGKILL/断电）。**诊断性**：流式/非流式 provider HTTP 400 body 统一提取并附加到异常，经 trace `llm_error.detail`、Web error 事件 `detail`/`status_code`、前端纯文本展示与群聊 `TurnOutcome.message` 传到用户可见错误。**Non-Goal**：SIGKILL/断电即时配对、orphan result/畸形链重排、新增 `Message.is_error`、真实 API 逐字比对。research_tier = full。设计证据：`/tmp/repro-304.md` + 失败测试提交 `5b3af47e`。
-
 ### 第二十批：workflow foreach 预算截断可见性（#286）
 
 - `foreach-budget-truncation-visibility`（issue [#286](https://github.com/Xingkai98/asterwynd/issues/286)）：**已归档 2026-10-03**。#279（静态截断可见）的独立对抗验证拆出的**同缺陷类、范围外**项——治 `max_items=0` 路径下的**预算**截断静默。`_resolve_items`（`scheduler.py:2675-2678`）在 `max_items==0` 时返回 `items[:remaining_expansion_capacity()]`，切片使 `_check_foreach_budget`（`:2167`）的 `run+delta>limit` **刚好不触发** ⇒ 超预算项**静默丢弃**（实测：60 声明 / 24 展开 / 36 静默丢，`status=completed`、`diagnostics={}`）。**交付**：扩展 #279 共享 helper `_foreach_visibility_fields`（去 `max_items>0` 前置、加成因判别字段 `items_omitted_cause`），**三出口**一致报告「声明 N / 展开 M / 省略 K」+ 成因（`max_items` vs `budget`）——dry-run 条目、`GetWorkflow(detail='nodes')` 投影、**`RunWorkflow` 结果信封**（用户拍板 OQ2=(b) 新增出口，一并补 #279 静态字段缺口）；字段**后写**绕过 `_bounded_node` 白名单；成因字段不复用既有 `reason` 键。**对抗验证修正**：proposal 的「非 terminal 一律响亮」被实测证伪（切片 ≤ `max_fan_in` 时非 terminal 同样静默），边界文字改「切片后预算仍够图跑完即静默」；design「静态路径逐字节不变」改为「既有字段值不变 + 新增成因键」。**Non-Goal**：不改 `max_items` 默认值（#276）、不改 `max_items=0` 语义、不改 #279 静态面、成因不细化到绑定维度、不改 `GetWorkflow` 默认 `detail='summary'` 出口。research_tier = light。**验收**：review-loop 2 轮 PASS（R1 PASS + 3 Low → 修 → R2 确认 PASS）；新测试 7 条（`test_foreach_truncation_visibility.py` 25 passed）；`agent/{subagent,tools}` 1710 passed；benchmark-gate PASS（1.0000）；全量除 2 处预存在 `/tmp` 环境失败外全绿。
