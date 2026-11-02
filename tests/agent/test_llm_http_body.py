@@ -154,3 +154,40 @@ def test_openai_serializes_synthetic_tool_result_with_error_prefix():
     assert tool_messages[0]["content"].startswith(SYNTHETIC_TOOL_RESULT_PREFIX)
     assert not tool_messages[1]["content"].startswith(SYNTHETIC_TOOL_RESULT_PREFIX)
     assert "is_error" not in tool_messages[0]
+
+
+@pytest.mark.asyncio
+async def test_empty_error_body_does_not_crash_or_add_detail():
+    async def handler(request):
+        return httpx.Response(400, content=b"")
+
+    async with _client(handler) as client:
+        response = await client.post("http://fake.invalid/v1/messages")
+        with pytest.raises(httpx.HTTPStatusError) as caught:
+            await raise_for_status_with_body(response)
+
+    assert getattr(caught.value, HTTP_BODY_ATTRIBUTE) == ""
+    assert _http_error_text(caught.value) == ""
+
+
+def test_real_result_colliding_with_synthetic_prefix_is_known_limitation():
+    from agent.llm import ToolCallDelta
+    from agent.message import SYNTHETIC_TOOL_RESULT_PREFIX
+
+    llm = AnthropicLLM(api_key="fake", base_url="http://fake.invalid", model="claude-test")
+    payload = llm._build_payload([
+        Message(role="user", content="go"),
+        Message(role="assistant", content="", tool_calls=[
+            ToolCallDelta(id="c1", name="Echo", arguments="{}"),
+        ]),
+        Message(role="tool", content=f"{SYNTHETIC_TOOL_RESULT_PREFIX} a real result",
+                tool_call_id="c1"),
+    ])
+    tool_result_message = next(
+        m for m in payload["messages"]
+        if m["role"] == "user"
+        and isinstance(m["content"], list)
+        and m["content"]
+        and m["content"][0].get("type") == "tool_result"
+    )
+    assert tool_result_message["content"][0]["is_error"] is True  # documented collision

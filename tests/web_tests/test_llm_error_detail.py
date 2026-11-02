@@ -142,3 +142,16 @@ async def test_web_session_runner_failure_message_is_fixed_summary():
 
     assert outcome.status == "failed"
     assert outcome.message == "HTTP 400 (invalid_request_error)"
+
+
+def test_group_summary_ignores_error_message_sentinel_even_for_known_type():
+    detail = json.dumps({
+        "error": {
+            "type": "invalid_request_error",
+            "message": "system prompt sentinel / secret payload",
+        },
+    })
+    summary = _group_failure_summary({"status_code": 400, "detail": detail})
+    assert summary == "HTTP 400 (invalid_request_error)"
+    assert "sentinel" not in summary
+    assert "secret" not in summary

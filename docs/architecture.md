@@ -14,7 +14,7 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 
 - `messages` 是 AgentLoop 的主要状态。
 - LLM 调用、工具执行、记忆压缩、生命周期扩展和轨迹记录通过独立模块协作。
-- tool-call 消息链必须保持合法，assistant 的 tool call 必须对应 tool result。
+- tool-call 消息链必须保持合法，assistant 的 tool call 必须对应 tool result。run 在 tool_calls 与 tool_result 之间被打断时，run 起点会对「整条历史中无同 id 结果」的悬空调用补一条确定性、明确标记的合成 `tool_result`（Anthropic 序列化带 `is_error: true`）；`run()` finally 落盘前做 best-effort 补配对。SIGKILL/断电不在保证范围（issue #304）。
 
 ## 插件系统
 
@@ -216,6 +216,7 @@ LLM 抽象位于 `agent/llm.py`。当前包含 OpenAI-compatible 和 Anthropic-c
 Anthropic / DeepSeek 兼容路径需要注意：
 
 - 连续 tool result 需要合并为一个 user 消息中的多个 `tool_result` block。
+- 中断遗留的悬空 `tool_use` 由 run 起点自愈补合成结果；orphan/misplaced 畸形链只记录、不承诺修复（issue #304）。
 - assistant 消息中 text block 必须在 tool_use block 前。
 - provider 专有字段需要保守保留，避免后续请求丢字段。
 

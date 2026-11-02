@@ -264,3 +264,14 @@ async def test_compaction_keeps_repaired_tool_chain_paired():
         if m.role == "tool" and m.tool_call_id
     }
     assert assistant_ids == result_ids
+
+
+def test_duplicate_tool_call_ids_synthesize_once_and_do_not_claim_full_repair():
+    messages = [_assistant(_call("c1"), _call("c1"))]
+
+    report = repair_tool_call_pairing(messages)
+
+    assert report.changed
+    assert len(report.repaired) == 1
+    assert len([m for m in report.messages if m.role == "tool"]) == 1
+    # 重复 id 本身仍是畸形输入；本函数只保证不新增第二条合成结果。

@@ -529,3 +529,38 @@ async def test_resume_early_cancel_preserves_history_todos_skills_prompt(tmp_pat
     assert saved.user_system_prompt == "persona prompt"
     assert [t.content for t in saved.todos] == ["keep me"]
     assert saved.active_skills == ["skill-a"]
+
+
+@pytest.mark.asyncio
+async def test_normal_run_start_repair_emits_run_source_event(tmp_path):
+    """无 resume_snapshot 的普通 run 起点修复：source="run" 事件。"""
+    messages = [
+        Message(role="user", content="go"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCallDelta(id="c1", name="Echo", arguments="{}")],
+        ),
+    ]
+    loop = AgentLoop(
+        llm=TextOnlyLLM(),
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        run_config=AgentRunConfig(),
+    )
+    events = []
+
+    async def on_event(event_type, data):
+        events.append((event_type, data))
+
+    result = await loop.run(messages, on_event=on_event)
+
+    assert result.content == "done"
+    repair_events = [
+        data for event_type, data in events
+        if event_type == "tool_pairing_repaired"
+    ]
+    assert len(repair_events) == 1
+    assert repair_events[0]["source"] == "run"
+    assert repair_events[0]["count"] == 1
+    assert any(m.role == "tool" and m.tool_call_id == "c1" for m in messages)
