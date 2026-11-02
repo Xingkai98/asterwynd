@@ -8,15 +8,15 @@
 
 > 本小节是 grill 当时的记录；后续对抗轮产生的修订见各决策行后的「后续修订」注记，最终口径以 `design.md` / `specs/` 为准。
 - **决策**: 修复放在 `AgentLoop` 的 run 边界（`_run` 起点为主修，`run()` finally 落盘前 best-effort），不在 `SessionStore.load`、resume-only 或 provider 序列化层做主修；理由: load 是忠实快照层且覆盖不了同进程重试（`web/session.py:2125-2149`），resume 分支只在有快照时执行（`agent/loop.py:709`），序列化层只改临时 payload 且要同时改 Anthropic/OpenAI 两套（`agent/anthropic_llm.py:227-304`、`agent/openai_llm.py:279-317`），run 边界一次覆盖 Chat、群聊成员、CLI resume 与 subagent；来源: fb029c8c-4f40-4fbc-8dfc-e1daff8bc052
-- **后续修订（ADV-8/ADV-D2，2026-11-02）**: resume 的消息重建与 todos/skills/user_system_prompt 同步恢复 SHALL 移到 `set_mode` await 之前，避免早期取消用截断历史/未恢复状态覆盖快照。
+- **后续修订（ADV-8/ADV-D2，2026-11-02）**: resume 的消息重建与 todos/skills/user_system_prompt 同步恢复 SHALL 移到 `set_mode` await 之前，避免早期取消用截断历史/未恢复状态覆盖快照；来源: 581c8222-240e-4e85-8120-cb16810e1adc
 - **决策**: 为缺失 id 补一条明确标记为合成的 `tool` 消息，不丢弃悬空 assistant、不删除其 `tool_calls`；理由: 合成是加法，保留 assistant 已产出的文本/reasoning 与「中断发生」事实；丢弃会不可逆地篡改用户已看到的历史，删除 tool_calls 则丢失工具意图；理由与 RIR 中 pydantic-ai/ADK/Bernstein/OpenAI Agents 的合成方向一致；来源: fb029c8c-4f40-4fbc-8dfc-e1daff8bc052
 - **决策**: 合成内容必须确定性、固定前缀 `[asterwynd:synthetic-tool-result]`、携带原 `tool_call_id`，文案包含工具名/id 且不含时间戳/随机值；理由: 幂等判据是「该 id 是否已被 assistant 后连续 tool 块覆盖」，第二次修复必须 `changed=False` 且 `Message.to_dict` 字节一致，才能钉住 prompt cache 稳定性（`agent/message.py:162-177`、`208-210`）；来源: fb029c8c-4f40-4fbc-8dfc-e1daff8bc052
 - **决策**: `run()` finally 的补配对必须同步、异常隔离、只写 warning，不 await 事件，且不得吞掉原始 `CancelledError`/异常；理由: 取消状态下再次 await 可能被取消，纯内存 O(n) 操作不会引入挂起点；`run()` 的 finally 已承担 `_save_session`（`agent/loop.py:655-662`、`1744-1770`），补配对放在其前即可保证落盘快照合法；来源: fb029c8c-4f40-4fbc-8dfc-e1daff8bc052
-- **后续修订（ADV-2，2026-11-02）：仍要求同步/异常隔离/不 await Web 事件，但若 `trace_recorder` 存在，SHALL 同步记录 `source="finally"` 的 `tool_pairing_repaired` trace step。**
+- **后续修订（ADV-2，2026-11-02）：仍要求同步/异常隔离/不 await Web 事件，但若 `trace_recorder` 存在，SHALL 同步记录 `source="finally"` 的 `tool_pairing_repaired` trace step；来源: 581c8222-240e-4e85-8120-cb16810e1adc
 - **决策**: 诊断性统一在 `raise_for_status()` 前提取响应体（流式 `aread()`，非流式直接读），把完整可读 body 附加到 `httpx.HTTPStatusError` 属性（trace/Web/群聊展示时才截断），异常类型与 reasoning/cache/vision 重试语义保持不变；理由: 当前流式路径在 `agent/llm.py:132-136` 直接 raise、Web 错误事件只带 `type: message`（`web/session.py:2133-2138`），body 已可由 `_http_error_text` 读取（`agent/anthropic_llm.py:68-81`），属传播缺口；来源: fb029c8c-4f40-4fbc-8dfc-e1daff8bc052
-- **后续修订（ADV-D1，2026-11-02）**: 群聊共享日志不写 provider 的 `error.message`/原始 body，只用 `HTTP <status>` + allowlist 校验的 `error.type` 固定摘要；原始 bounded detail 只给成员自己的连接。
+- **后续修订（ADV-D1，2026-11-02）**: 群聊共享日志不写 provider 的 `error.message`/原始 body，只用 `HTTP <status>` + 已知错误类型枚举（未知写 `unknown`）固定摘要；原始 bounded detail 只给成员自己的连接；来源: 581c8222-240e-4e85-8120-cb16810e1adc
 - **决策**: 不新增 `Message.is_error`，用文本标记表达中断；空 `tool_call_id` 不合成、只日志；理由: `Message` 无该字段（`agent/message.py:146-155`），Anthropic 的 `is_error` 与「中断」不完全等价且 OpenAI 无对应字段；正常 provider 不会产生空 id（`agent/llm.py:24-27`），空 id 属畸形输入，不应伪造可序列化配对；来源: fb029c8c-4f40-4fbc-8dfc-e1daff8bc052
-- **后续修订（ADV-3，2026-11-02）**: 仍不新增 `Message.is_error` 字段/不改持久化 schema；但 Anthropic 序列化层按固定合成前缀写 `is_error: true`，OpenAI 兼容路径用 `Error:` 文本前缀作为等价信号。
+- **后续修订（ADV-3，2026-11-02）**: 仍不新增 `Message.is_error` 字段/不改持久化 schema；但 Anthropic 序列化层按固定合成前缀写 `is_error: true`，OpenAI 兼容路径用 `Error:` 文本前缀作为等价信号；来源: 581c8222-240e-4e85-8120-cb16810e1adc
 
 ## Code-Resolved Questions
 - Q1 合成结果是否在 Web 历史中可见：可见，且不需要新增前端组件。`session_history` 投影包含 `role:"tool"` 的 `content` 与 `tool_call_id`（`web/session.py:76-108`），前端把非空 tool content 渲染成折叠工具行（`web/static/chat.js:781-789`、`814-841`），合成内容非空且带固定前缀，会出现在摘要/展开体。补充缺口：首次重连、尚未发起新 run 时，`build_history_payload` 回退到 `resume_snapshot.messages`（`web/session.py:82-89`），而 `_restore_snapshot` 不预填 `session.messages`（`web/session.py:1716-1718`），因此修复前显示的历史仍可能是悬空链；要满足 proposal 的「历史里能看到」需要在 history payload 做只读副本修复，或明确把可见性推迟到首次 run。
