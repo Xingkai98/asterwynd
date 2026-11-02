@@ -22,8 +22,9 @@ from agent.config import (
     AsterwyndConfig,
     append_sidecar_workspace,
 )
+from agent.llm import HTTP_BODY_ATTRIBUTE
 from agent.loop import AgentLoop
-from agent.message import Message, extract_text
+from agent.message import Message, extract_text, repair_tool_call_pairing
 from agent.mcp import build_mcp_manager
 from agent.run_identity import new_session_id
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
@@ -52,6 +53,50 @@ from agent.team.runner import (
 from web.debug_hook import DebugHook
 
 logger = logging.getLogger("asterwynd.web.session")
+
+#: Web error event 中 provider body 的展示上限（issue #304）。
+LLM_ERROR_DETAIL_LIMIT = 4096
+
+#: 群聊共享日志允许的 provider 错误类型（未知一律 ``unknown``）。
+#: 只允许固定枚举，避免 provider 控制的自由文本进入共享房间日志。
+SAFE_LLM_ERROR_TYPES = frozenset({
+    "invalid_request_error",
+    "authentication_error",
+    "permission_error",
+    "not_found_error",
+    "request_too_large",
+    "rate_limit_error",
+    "api_error",
+    "overloaded_error",
+    "billing_error",
+})
+
+
+def _bounded_text(text: str, limit: int = LLM_ERROR_DETAIL_LIMIT) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "…[truncated]"
+
+
+def _group_failure_summary(data: dict) -> str:
+    """群聊共享日志用的固定摘要：只含 HTTP 状态 + 已知错误类型枚举。"""
+    status = data.get("status_code")
+    if not isinstance(status, int):
+        return ""
+    error_type = "unknown"
+    detail = data.get("detail")
+    if isinstance(detail, str) and detail:
+        try:
+            parsed = json.loads(detail)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            error = parsed.get("error")
+            if isinstance(error, dict):
+                candidate = error.get("type")
+                if isinstance(candidate, str) and candidate in SAFE_LLM_ERROR_TYPES:
+                    error_type = candidate
+    return f"HTTP {status} ({error_type})"
 
 
 def _history_tool_calls(message) -> list[dict] | None:
@@ -84,7 +129,9 @@ def build_history_payload(session: "AgentSession") -> dict:
     因此这里回退用快照历史渲染。
     """
     if not session.messages and session.resume_snapshot is not None:
-        messages = session.resume_snapshot.messages
+        # 只读展示修复：重启后首次连接、尚未发起新 run 时也能看到合成结果。
+        # repair 是纯函数；不修改 resume_snapshot，也不发事件/落盘。
+        messages = repair_tool_call_pairing(session.resume_snapshot.messages).messages
     else:
         messages = session.messages
     return {
@@ -2132,10 +2179,14 @@ class SessionManager:
                 )
             except Exception as exc:
                 logger.exception("Session run failed")
-                await queue.put({
-                    "type": "error",
-                    "data": {"message": f"{type(exc).__name__}: {exc}"},
-                })
+                error_data = {"message": f"{type(exc).__name__}: {exc}"}
+                body = getattr(exc, HTTP_BODY_ATTRIBUTE, "")
+                if isinstance(body, str) and body:
+                    error_data["detail"] = _bounded_text(body)
+                    status = getattr(getattr(exc, "response", None), "status_code", None)
+                    if isinstance(status, int):
+                        error_data["status_code"] = status
+                await queue.put({"type": "error", "data": error_data})
                 await queue.put({
                     "type": "done",
                     "data": {
@@ -2180,6 +2231,7 @@ class SessionManager:
         # assistant」——那条路径在并发被拒时会把陈旧内容当本轮产出。
         turn_text = ""
         turn_error = False
+        turn_error_message = ""
         try:
             # drain 永不退出、永远消费 queue（M2）：无绑定连接时事件被丢弃而不是
             # 无界堆积；单条连接 send 失败只摘该连接（channel.broadcast 内部处理），
@@ -2196,6 +2248,7 @@ class SessionManager:
                         turn_error = True
                 elif event_type == "error":
                     turn_error = True
+                    turn_error_message = _group_failure_summary(event.get("data") or {})
                 await channel.broadcast(event)
         finally:
             # run 真正结束：pending 立即失败（既有语义，tasks 2.4）。断连走不到这里——
@@ -2230,7 +2283,9 @@ class SessionManager:
         # 回合出口落盘 + 通知监听者：**在 run 锁内**（`_run_session_locked` 由
         # `run_session` 在持锁状态下调用），所以读到的一定是本次 run 的产出。
         session.last_turn = TurnOutcome(
-            status="failed" if turn_error else "text", text=turn_text
+            status="failed" if turn_error else "text",
+            text=turn_text,
+            message=turn_error_message,
         )
         for listener in list(session.turn_listeners):
             try:

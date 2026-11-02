@@ -7,11 +7,19 @@ from contextvars import ContextVar
 from typing import Optional, TYPE_CHECKING
 
 from agent.llm import (
+    HTTP_BODY_ATTRIBUTE,
     BaseLLM, CachePlan, LLMResponse, LLMStreamEvent, ToolCallDelta, Usage,
+    raise_for_status_with_body,
     supports_vision, vision_mode, _messages_have_images, _is_400_error,
     sanitize_payload_for_logging,
 )
-from agent.message import Message, ReasoningBlock, TextBlock, ImageBlock
+from agent.message import (
+    SYNTHETIC_TOOL_RESULT_PREFIX,
+    Message,
+    ReasoningBlock,
+    TextBlock,
+    ImageBlock,
+)
 
 if TYPE_CHECKING:
     from agent.message import ContentBlock
@@ -72,6 +80,9 @@ def _http_error_text(exc: Exception) -> str:
     ``HTTPStatusError.response.text`` 仍可读（issue #256 D7）。错误文案在
     ``error.message`` 里。取不到时返回空串（不抛）。
     """
+    body = getattr(exc, HTTP_BODY_ATTRIBUTE, None)
+    if isinstance(body, str) and body:
+        return body
     response = getattr(exc, "response", None)
     if response is None:
         return ""
@@ -272,6 +283,11 @@ class AnthropicLLM(BaseLLM):
                     "tool_use_id": msg.tool_call_id or "",
                     "content": self._content_to_anthropic(msg.content, resolved_model, force_vision=force_vision),
                 }
+                if (
+                    isinstance(msg.content, str)
+                    and msg.content.startswith(SYNTHETIC_TOOL_RESULT_PREFIX)
+                ):
+                    tool_result_block["is_error"] = True
                 # Anthropic requires all tool_results for a single assistant turn
                 # to be in one user message. Merge consecutive tool messages.
                 if anthropic_messages and anthropic_messages[-1]["role"] == "user" and isinstance(anthropic_messages[-1].get("content"), list):
@@ -615,7 +631,7 @@ class AnthropicLLM(BaseLLM):
                 error_body,
                 json.dumps(sanitize_payload_for_logging(payload), ensure_ascii=False),
             )
-        response.raise_for_status()
+        await raise_for_status_with_body(response)
         raw = response.json()
         data = await raw if asyncio.iscoroutine(raw) else raw
 

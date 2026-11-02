@@ -286,13 +286,20 @@ class TraceRecorder:
                 return summary if isinstance(summary, dict) else None
         return None
 
-    def record_llm_error(self, error_type: str, message: str = "") -> None:
+    def record_llm_error(
+        self, error_type: str, message: str = "", detail: str = "",
+    ) -> None:
         """Record a structured LLM call failure (additive step type ``llm_error``).
 
         Called at the failure source before re-raising, so the exception path
         keeps its control flow while the trace gains a structured signal.
+        ``detail`` is an optional bounded provider HTTP body (issue #304);
+        omitted entirely when empty so existing trace shapes stay unchanged.
         """
-        self.record("llm_error", error_type=error_type, message=message)
+        data: dict[str, Any] = {"error_type": error_type, "message": message}
+        if detail:
+            data["detail"] = bound_text(detail)
+        self.record("llm_error", **data)
 
     def record_completion(self, status: str, content: str = "") -> None:
         self.record(

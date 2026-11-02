@@ -736,7 +736,9 @@ function readableErrorMessage(data) {
   if (payload.code && ERROR_MESSAGES[payload.code]) {
     return ERROR_MESSAGES[payload.code];
   }
-  return payload.message ? payload.message : 'Run failed.';
+  const message = payload.message ? payload.message : 'Run failed.';
+  // Provider HTTP body（issue #304）：有界纯文本，追加在基础文案后。
+  return payload.detail ? `${message}\n${payload.detail}` : message;
 }
 
 function syncMode(mode) {

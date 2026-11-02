@@ -17,11 +17,19 @@ from agent.approval import (
     redact_value,
 )
 from agent.question import QuestionHandler
-from agent.message import Message, system_message, tool_result_message, extract_text
+from agent.message import (
+    SYNTHETIC_TOOL_RESULT_PREFIX,
+    Message,
+    RepairReport,
+    extract_text,
+    repair_tool_call_pairing,
+    system_message,
+    tool_result_message,
+)
 from agent.result import RunResult, StopReason, ToolCallMade
 from agent.artifact_store import AgentArtifactStore, new_key
 from agent.tools.base import ToolCall, ToolResult
-from agent.llm import LLMResponse, ToolCallDelta, CachePlan
+from agent.llm import HTTP_BODY_ATTRIBUTE, LLMResponse, ToolCallDelta, CachePlan
 from agent.hooks.manager import HookManager
 from agent.tools.registry import ToolRegistry
 from agent.context import BuildContext, ContextBuilder
@@ -104,6 +112,10 @@ def _default_ledger_path() -> str:
 CORE_STABLE_TOOL_NAMES = (
     "Read", "Edit", "Write", "Bash", "Glob", "Grep", "InspectGitDiff",
 )
+
+#: ``tool_pairing_repaired`` observability bounds (issue #304).
+PAIRING_EVENT_MAX_IDS = 20
+PAIRING_EVENT_ID_LIMIT = 128
 
 
 def _text_prefix_guess(result_text: str) -> bool:
@@ -653,6 +665,16 @@ class AgentLoop:
                 resume_snapshot=resume_snapshot,
             )
         finally:
+            # Best-effort: cancellation/exception unwinding still executes this
+            # finally. Repair before cleanup/save so a cancelled mid-tool run
+            # persists a paired chain. Sync on purpose: awaiting here could be
+            # cancelled again; do not emit a Web event from this path.
+            try:
+                self._apply_pairing_repair(
+                    messages, source="finally", trace_recorder=trace_recorder,
+                )
+            except Exception:  # noqa: BLE001 - 不得掩盖原始取消/异常
+                logger.warning("Failed to repair tool-call pairing in finally", exc_info=True)
             if self.background_manager is not None:
                 self.background_manager.cleanup()
             if self.session_store is not None and session_id:
@@ -710,11 +732,11 @@ class AgentLoop:
             current_system = [m for m in messages if m.role == "system"]
             new_user_input = [m for m in messages if m.role != "system"]
 
-            if resume_snapshot.mode != self.runtime_state.current_mode:
-                await self.set_mode(resume_snapshot.mode, source="resume")
-                # Re-snapshot the ceiling to the restored mode (mount A): the
-                # bound installed in ``run`` predates this resume restoration.
-                set_mode_ceiling(self.runtime_state.current_mode)
+            # ADV-8/ADV-D2: restore ALL synchronous snapshot state before the
+            # first await. If set_mode() is cancelled mid-await, run()'s finally
+            # must still see the full history and restored plan/skills/prompt;
+            # otherwise it would save truncated/unrestored state over the old
+            # snapshot.
             self._execution_todos = list(resume_snapshot.todos)
             self._sync_todo_next_id()
             if self.skill_runtime is not None and resume_snapshot.active_skills:
@@ -733,6 +755,12 @@ class AgentLoop:
             # consumed (the earlier reset ran before this rebuild).
             self.memory.tool_result_spiller.reset(messages)
             start_iteration = 0
+
+            if resume_snapshot.mode != self.runtime_state.current_mode:
+                await self.set_mode(resume_snapshot.mode, source="resume")
+                # Re-snapshot the ceiling to the restored mode (mount A): the
+                # bound installed in ``run`` predates this resume restoration.
+                set_mode_ceiling(self.runtime_state.current_mode)
 
             mode = self.runtime_state.current_mode.value
             logger.info(
@@ -760,6 +788,14 @@ class AgentLoop:
                 if session_id is not None:
                     event_data["session_id"] = session_id
                 await on_event("run_started", event_data)
+
+        repair_source = "resume" if resume_snapshot is not None else "run"
+        repair_report = self._apply_pairing_repair(
+            messages, source=repair_source, trace_recorder=trace_recorder,
+        )
+        await self._emit_pairing_repair_event(
+            repair_report, source=repair_source, on_event=on_event,
+        )
 
         iterations = (
             count(start_iteration)
@@ -1313,9 +1349,11 @@ class AgentLoop:
             # existing run-failure semantics (design Decision 5 / grill Q4).
             recorder = self._active_trace_recorder
             if recorder is not None:
+                body = getattr(exc, HTTP_BODY_ATTRIBUTE, "")
                 recorder.record_llm_error(
                     _llm_exception_error_type(exc),
                     str(exc),
+                    detail=body if isinstance(body, str) else "",
                 )
             raise
 
@@ -1740,6 +1778,75 @@ class AgentLoop:
             if message.role == "user":
                 return extract_text(message.content)
         return ""
+
+    @staticmethod
+    def _bounded_pairing_ids(report: RepairReport) -> tuple[list[str], bool]:
+        ids = [call.tool_call_id for call in report.repaired]
+        bounded = [
+            value if len(value) <= PAIRING_EVENT_ID_LIMIT
+            else value[:PAIRING_EVENT_ID_LIMIT] + "…"
+            for value in ids[:PAIRING_EVENT_MAX_IDS]
+        ]
+        return bounded, len(ids) > PAIRING_EVENT_MAX_IDS
+
+    def _pairing_event_data(self, report: RepairReport, source: str) -> dict:
+        ids, truncated = self._bounded_pairing_ids(report)
+        return {
+            "source": source,
+            "count": len(report.repaired),
+            "tool_call_ids": ids,
+            "truncated": truncated,
+            "synthetic_prefix": SYNTHETIC_TOOL_RESULT_PREFIX,
+        }
+
+    def _apply_pairing_repair(
+        self,
+        messages: list[Message],
+        *,
+        source: str,
+        trace_recorder: "TraceRecorder | None" = None,
+    ) -> RepairReport:
+        """Synchronously repair dangling tool_calls before any LLM request.
+
+        Safe to call from ``run()``'s ``finally``: pure sync in-memory work,
+        no awaits. Never swallows the caller's original cancellation/exception
+        (the caller wraps this call in its own try/except).
+        """
+        report = repair_tool_call_pairing(messages)
+        if not report.changed:
+            return report
+        messages[:] = report.messages
+        ids, truncated = self._bounded_pairing_ids(report)
+        logger.warning(
+            "Repaired %d dangling tool call(s) with synthetic results (source=%s): %s%s",
+            len(report.repaired),
+            source,
+            ", ".join(ids),
+            " …" if truncated else "",
+        )
+        if trace_recorder is not None:
+            try:
+                trace_recorder.record(
+                    "tool_pairing_repaired",
+                    **self._pairing_event_data(report, source),
+                )
+            except Exception:  # noqa: BLE001 - 可观测性不得打断 run
+                logger.warning("Failed to record tool pairing repair", exc_info=True)
+        return report
+
+    async def _emit_pairing_repair_event(
+        self,
+        report: RepairReport,
+        *,
+        source: str,
+        on_event: Optional[Callable[[str, dict], Awaitable[None]]],
+    ) -> None:
+        if not report.changed or on_event is None:
+            return
+        try:
+            await on_event("tool_pairing_repaired", self._pairing_event_data(report, source))
+        except Exception:  # noqa: BLE001 - 可观测性不得打断 run
+            logger.warning("Failed to emit tool pairing repair event", exc_info=True)
 
     def _save_session(
         self,

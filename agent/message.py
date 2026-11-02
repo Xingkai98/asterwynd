@@ -210,6 +210,125 @@ def tool_result_message(tool_call_id: str, content: str | list[ContentBlock]) ->
     return Message(role="tool", content=content, tool_call_id=tool_call_id)
 
 
+# ── Tool-call pairing repair (issue #304) ─────────────────────────────
+
+#: 合成 tool_result 的固定前缀。序列化层据此写 provider 级错误信号
+#: （Anthropic ``is_error: true``；OpenAI 用 ``Error:`` 文本前缀）。
+SYNTHETIC_TOOL_RESULT_PREFIX = "[asterwynd:synthetic-tool-result] Error:"
+
+#: 合成文案里 name/id 的展示上限（原 id 仍完整保存在 tool_call_id）。
+_SYNTHETIC_LABEL_LIMIT = 128
+
+
+@dataclass(frozen=True)
+class RepairedCall:
+    tool_call_id: str
+    tool_name: str
+
+
+@dataclass(frozen=True)
+class RepairReport:
+    """一次配对修复的结果；``messages`` 是修复后的列表（纯函数，不改入参）。"""
+
+    messages: list[Message]
+    repaired: list[RepairedCall]
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.repaired)
+
+
+def _bounded_label(value: object, limit: int = _SYNTHETIC_LABEL_LIMIT) -> str:
+    text = "" if value is None else str(value)
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "…"
+
+
+def _synthetic_tool_result(tool_call) -> Message:
+    tool_name = _bounded_label(getattr(tool_call, "name", ""))
+    tool_id = _bounded_label(getattr(tool_call, "id", ""))
+    content = (
+        f"{SYNTHETIC_TOOL_RESULT_PREFIX} Tool call '{tool_name}' ({tool_id}) "
+        "did not complete because the run was interrupted before a result was "
+        "recorded. The tool may have partially executed; inspect state before "
+        "retrying."
+    )
+    return Message(role="tool", content=content, tool_call_id=tool_call.id)
+
+
+def repair_tool_call_pairing(messages: list[Message]) -> RepairReport:
+    """为中断遗留的悬空 assistant ``tool_calls`` 补合成 ``tool_result``。
+
+    规则（design Decision 3/4）：
+
+    - 按 assistant 分组，只把紧随其后的连续 ``role="tool"`` 消息视为结果块；
+    - 只在该 id 于整条历史中都没有任何 ``role="tool"`` 消息时合成；
+      结果存在但位置不合法（orphan-before / misplaced-after）只记录、不合成，
+      避免同一 ``tool_use_id`` 出现两条结果；
+    - 同一 assistant 的多个缺失按原 ``tool_calls`` 顺序插入；
+    - 空 id 不合成；正常链返回原列表对象，零改动。
+    """
+    tool_ids_in_history = {
+        m.tool_call_id
+        for m in messages
+        if m.role == "tool" and m.tool_call_id
+    }
+    repaired: list[RepairedCall] = []
+    out: list[Message] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        out.append(message)
+        if message.role != "assistant" or not message.tool_calls:
+            index += 1
+            continue
+
+        block_end = index + 1
+        while block_end < len(messages) and messages[block_end].role == "tool":
+            out.append(messages[block_end])
+            block_end += 1
+
+        resolved_in_block = {
+            m.tool_call_id
+            for m in messages[index + 1:block_end]
+            if m.tool_call_id
+        }
+        seen_ids: set[str] = set()
+        synthetic: list[Message] = []
+        for tool_call in message.tool_calls:
+            tool_call_id = getattr(tool_call, "id", "") or ""
+            if not tool_call_id:
+                logger.warning(
+                    "Skipping tool-call pairing repair for empty tool_call_id "
+                    "(assistant message index %d)", index,
+                )
+                continue
+            if tool_call_id in resolved_in_block or tool_call_id in seen_ids:
+                continue
+            seen_ids.add(tool_call_id)
+            if tool_call_id in tool_ids_in_history:
+                logger.warning(
+                    "Not synthesizing tool result for %r: a result exists in a "
+                    "non-adjacent position (orphan/misplaced); leaving the "
+                    "malformed chain unchanged", _bounded_label(tool_call_id),
+                )
+                continue
+            synthetic.append(_synthetic_tool_result(tool_call))
+            repaired.append(RepairedCall(
+                tool_call_id=tool_call_id,
+                tool_name=str(getattr(tool_call, "name", "") or ""),
+            ))
+
+        if synthetic:
+            out.extend(synthetic)
+        index = block_end
+
+    if not repaired:
+        return RepairReport(messages=messages, repaired=[])
+    return RepairReport(messages=out, repaired=repaired)
+
+
 def system_message(content: str) -> Message:
     """快捷构造系统消息"""
     return Message(role="system", content=content)
