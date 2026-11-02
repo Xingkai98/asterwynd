@@ -165,9 +165,9 @@
       --require-base` EXIT=0。
 - [x] 4.6 变异验证：把 `repair_tool_call_pairing` 改为 no-op → 恢复/中断/幂等用例变红；
       去掉 error detail 传播 → 诊断用例变红；恢复后全绿。
-- [ ] 4.7 benchmark smoke：本 change 触及 `agent/` 与 `web/`，按 checker 触发面跑
-      `uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo .
-      --runs-dir /tmp/smoke-304`。
+- [x] 4.7 benchmark smoke：`uv run asterwynd benchmark benchmarks/tasks --agent fake
+      --source-repo . --runs-dir /tmp/smoke-304` EXIT=0（72 tasks，fake agent 4 passed /
+      68 failed 属预期；验证工具接线未破）。
 
 ## 5. 实现后独立审阅闭环
 
