@@ -244,8 +244,8 @@ async def test_compaction_keeps_repaired_tool_chain_paired():
         _assistant(content="old answer"),
         _user("please call"),
         _assistant(_call("c1")),
-        _tool("c1"),
     ]
+    messages = repair_tool_call_pairing(messages).messages
     memory = MemoryManager(
         max_tokens=1_000, recent_window=2, summarizer=TruncationSummarizer(),
     )
@@ -275,3 +275,21 @@ def test_duplicate_tool_call_ids_synthesize_once_and_do_not_claim_full_repair():
     assert len(report.repaired) == 1
     assert len([m for m in report.messages if m.role == "tool"]) == 1
     # 重复 id 本身仍是畸形输入；本函数只保证不新增第二条合成结果。
+
+
+def test_pairing_event_ids_are_bounded():
+    from agent.loop import AgentLoop, PAIRING_EVENT_ID_LIMIT, PAIRING_EVENT_MAX_IDS
+    from agent.message import RepairReport, RepairedCall
+
+    report = RepairReport(
+        messages=[],
+        repaired=[RepairedCall(tool_call_id="x" * 200, tool_name="Echo")
+                  for _ in range(PAIRING_EVENT_MAX_IDS + 5)],
+    )
+
+    ids, truncated = AgentLoop._bounded_pairing_ids(report)
+
+    assert len(ids) == PAIRING_EVENT_MAX_IDS
+    assert truncated is True
+    assert all(len(value) == PAIRING_EVENT_ID_LIMIT + 1 for value in ids)
+    assert all(value.endswith("…") for value in ids)

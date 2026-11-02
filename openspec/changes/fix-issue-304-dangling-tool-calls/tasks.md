@@ -47,7 +47,7 @@
 
 ### 1.2 Loop / 恢复 / 中断
 
-- [x] 1.2.1 改造 `tests/agent/test_issue304_dangling_tool_calls_repro.py`：端到端断言
+- [x] 1.2.1 改造 `tests/agent/test_issue304_dangling_tool_calls.py`：端到端断言
       （cancel → 重新加载 → 下一次请求成功、fake provider 无违规）保留；把「落盘必须仍
       悬空」的触发断言改为**中断前**断言（给 `SlowTool` 注入 `messages`，在 execute 内
       断言 assistant tool_calls 已 append 且无匹配 tool 消息），并断言取消后落盘快照已含

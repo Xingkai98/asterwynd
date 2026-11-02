@@ -2181,11 +2181,13 @@ class SessionManager:
                 logger.exception("Session run failed")
                 error_data = {"message": f"{type(exc).__name__}: {exc}"}
                 body = getattr(exc, HTTP_BODY_ATTRIBUTE, "")
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                if isinstance(status, int):
+                    # HTTP 错误即使 body 为空也保留状态码：群聊共享摘要仍可显示
+                    # ``HTTP <status>``，同时不泄露任何 body。
+                    error_data["status_code"] = status
                 if isinstance(body, str) and body:
                     error_data["detail"] = _bounded_text(body)
-                    status = getattr(getattr(exc, "response", None), "status_code", None)
-                    if isinstance(status, int):
-                        error_data["status_code"] = status
                 await queue.put({"type": "error", "data": error_data})
                 await queue.put({
                     "type": "done",
@@ -2248,7 +2250,10 @@ class SessionManager:
                         turn_error = True
                 elif event_type == "error":
                     turn_error = True
-                    turn_error_message = _group_failure_summary(event.get("data") or {})
+                    summary = _group_failure_summary(event.get("data") or {})
+                    if summary:
+                        # 不要用后续无状态码的 error 清空已得到的 HTTP 摘要。
+                        turn_error_message = summary
                 await channel.broadcast(event)
         finally:
             # run 真正结束：pending 立即失败（既有语义，tasks 2.4）。断连走不到这里——

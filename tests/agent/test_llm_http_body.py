@@ -147,10 +147,20 @@ def test_openai_serializes_synthetic_tool_result_with_error_prefix():
         ]),
         Message(role="tool", content=f"{SYNTHETIC_TOOL_RESULT_PREFIX} interrupted",
                 tool_call_id="c1"),
+        Message(role="assistant", content="", tool_calls=[
+            ToolCallDelta(id="c2", name="Echo", arguments="{}"),
+        ]),
         Message(role="tool", content="real ok", tool_call_id="c2"),
     ])
 
+    assistant_messages = [m for m in messages if m["role"] == "assistant"]
+    call_ids = [
+        tc["id"] for message in assistant_messages for tc in message["tool_calls"]
+    ]
     tool_messages = [m for m in messages if m["role"] == "tool"]
+    tool_ids = [m["tool_call_id"] for m in tool_messages]
+    assert sorted(call_ids) == sorted(tool_ids)
+    assert len(tool_ids) == len(set(tool_ids))
     assert tool_messages[0]["content"].startswith(SYNTHETIC_TOOL_RESULT_PREFIX)
     assert not tool_messages[1]["content"].startswith(SYNTHETIC_TOOL_RESULT_PREFIX)
     assert "is_error" not in tool_messages[0]

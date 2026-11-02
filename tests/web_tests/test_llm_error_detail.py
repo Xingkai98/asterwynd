@@ -155,3 +155,21 @@ def test_group_summary_ignores_error_message_sentinel_even_for_known_type():
     assert summary == "HTTP 400 (invalid_request_error)"
     assert "sentinel" not in summary
     assert "secret" not in summary
+
+
+@pytest.mark.asyncio
+async def test_empty_body_http_error_still_carries_status_code():
+    manager = SessionManager()
+    session = manager.create_session(FailingLLM(_http_error(body="")))
+    events = []
+
+    async def collect(event):
+        events.append(event)
+
+    await manager.run_session(session, "hi", ws_send=collect)
+
+    error = next(e for e in events if e["type"] == "error")
+    assert error["data"]["status_code"] == 400
+    assert "detail" not in error["data"]
+    assert session.last_turn is not None
+    assert session.last_turn.message == "HTTP 400 (unknown)"
