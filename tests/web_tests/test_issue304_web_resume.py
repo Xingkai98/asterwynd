@@ -1,6 +1,5 @@
 """Web SessionManager 重启恢复路径（issue #304）：取消 → unload → resume → 再 run。"""
 import asyncio
-import json
 
 import pytest
 
