@@ -1,0 +1,17 @@
+flowchart TD
+    A1[用户 CLI Web]
+    A1 --> A2[AgentSession run lock 单一占用]
+    A2 -->|第 1 条指令| A3[AgentLoop]
+    A2 -->|第 2 条指令| A4[丢弃 不排队 不入库]
+    A4 -->|无重试 无告警| A5[任务实际丢失]
+    A3 --> A6[Provider]
+    A3 --> A7[SubAgentManager 上限 5 队列 20 深度 3]
+    A7 -->|忙时直接抛错| A8[RuntimeError]
+    A3 --> A9[WorkflowScheduler DAG 与四维预算]
+    A3 --> A10[trace 仅在内存]
+    A10 -->|仅 benchmark 落盘| A11[benchmark runner 写 trace 文件]
+    A3 --> A12[CostLedger 仅 CLI 构造]
+    A12 -->|web 侧未接线| A13[web 侧零记账]
+    A12 -->|entry 无 ts| A14[按日预算算不出]
+    A15[预算默认全 0 等于不限]
+    A15 -->|仅 warning 不阻断| A3

@@ -1,0 +1,28 @@
+flowchart TD
+    A1[CLI]
+    A2[Web]
+    A3[IM 飞书]
+    A4[GitHub CI]
+    A5[文件变更]
+    A6[cron 与 benchmark 回归]
+    A1 --> A7[Fast Path 纯程序 覆盖九成]
+    A2 --> A7
+    A3 --> A7
+    A4 --> A7
+    A5 --> A7
+    A6 --> A7
+    A7 -->|命中 thread| A8[Worker inbox]
+    A7 -->|结构不明或冲突| A9[Supervisor 与 Router]
+    A9 -->|DispatchWorker| A10[SubAgentManager 许可证 5 20 深度 3]
+    A10 -->|忙时入队| A8
+    A8 -->|每轮 iteration 顶部 drain| A11[Worker 即 AgentLoop]
+    A11 --> A12[Provider]
+    A11 -->|GraphEventForwarder digest 降噪| A13[浏览器与终端]
+    A11 --> A14[ledger 增加 ts 与 seq]
+    A11 --> A15[trace 落盘 run id json]
+    A11 --> A16[Watchdog shadow]
+    A16 -->|先只记不行动| A9
+    A14 --> A17[全局 USD 日预算 与 reserve]
+    A17 -->|超限拒绝| A9
+    A9 -->|读写| A18[Thread 复用 RoomLog]
+    A18 -->|五字段扩展| A9
